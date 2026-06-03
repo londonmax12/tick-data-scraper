@@ -16,6 +16,8 @@ _ROOTS = {
     "results_csv": config.CSV_DIR,
     "company_data": config.COMPANY_DIR,
     "crypto_data": config.CRYPTO_DIR,
+    "sec_data": config.SEC_DIR,
+    "sec_13f": config.SEC_13F_DIR,
 }
 
 
@@ -59,6 +61,10 @@ def enqueue_update(database, rel: str) -> dict:
         return _update_yfinance(database, name, d)
     if source == "results_csv":
         return _update_decode(database, name)
+    if source == "sec_data":
+        return _update_sec(database, name, d)
+    if source == "sec_13f":
+        return _update_sec_13f(database, name)
     raise UpdateError("unsupported dataset")
 
 
@@ -141,3 +147,52 @@ def _update_decode(database, ticker: str) -> dict:
     title = f"Re-decode {ticker}"
     return {"jobs": [{"id": database.create_job("decode", title, {"ticker": ticker}),
                       "title": title}]}
+
+
+def _update_sec(database, ticker: str, d: str) -> dict:
+    """Refresh whichever SEC products already exist for a ticker.
+
+    Point-in-time products (facts, filing index) are deleted so they re-download
+    fresh. Insider trades are append-only per-filing, so re-running just pulls
+    newly filed forms — existing per-accession files skip on the on-disk check.
+    """
+    jobs = []
+    common = {"tickers": [ticker]}
+    files = set(os.listdir(d))
+
+    if f"{ticker}_facts.csv" in files:
+        for fn in (f"{ticker}_facts.csv", f"{ticker}_concepts.csv",
+                   f"{ticker}_entity.csv"):
+            try:
+                os.remove(os.path.join(d, fn))
+            except OSError:
+                pass
+        jobs.append({"id": database.create_job(
+            "sec_facts", f"Update SEC fundamentals {ticker}", common),
+            "title": f"Update SEC fundamentals {ticker}"})
+
+    if f"{ticker}_filings.csv" in files:
+        for fn in (f"{ticker}_filings.csv", f"{ticker}_profile.csv"):
+            try:
+                os.remove(os.path.join(d, fn))
+            except OSError:
+                pass
+        jobs.append({"id": database.create_job(
+            "sec_submissions", f"Update SEC filings {ticker}", common),
+            "title": f"Update SEC filings {ticker}"})
+
+    if os.path.isdir(os.path.join(d, "insider")):
+        jobs.append({"id": database.create_job(
+            "sec_insider", f"Update SEC insider {ticker}", common),
+            "title": f"Update SEC insider {ticker}"})
+
+    if not jobs:
+        raise UpdateError("no SEC products to update for this ticker")
+    return {"jobs": jobs}
+
+
+def _update_sec_13f(database, cik: str) -> dict:
+    # New 13F filings download; already-saved periods skip on the on-disk check.
+    title = f"Update SEC 13F {cik}"
+    return {"jobs": [{"id": database.create_job(
+        "sec_13f", title, {"ciks": [cik]}), "title": title}]}

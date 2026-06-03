@@ -143,6 +143,8 @@
         <div class="tab active" data-tab="dukascopy">Dukascopy</div>
         <div class="tab" data-tab="yfinance">yfinance</div>
         <div class="tab" data-tab="binance">Binance</div>
+        <div class="tab" data-tab="sec">SEC</div>
+        <div class="tab" data-tab="sec13f">13F</div>
         <div class="tab" data-tab="decode">Decode</div>
       </div>
 
@@ -206,6 +208,33 @@
         </div>
         <button class="btn-primary" onclick="submitBinance()">Queue download</button>
         <div class="hint">Crypto OHLCV from Binance's public API into <code>crypto_data/</code>. One task per symbol-month; rate limits retry automatically.</div>
+      </div>
+
+      <!-- SEC EDGAR (by ticker) -->
+      <div class="pane" id="pane-sec">
+        <label>Tickers (comma or space separated)</label>
+        <input id="s-tickers" value="AAPL, MSFT, NVDA" />
+        <div class="chk"><input id="s-facts" type="checkbox" checked /><label style="margin:0">Fundamentals (XBRL company facts)</label></div>
+        <div class="chk"><input id="s-subs" type="checkbox" checked /><label style="margin:0">Filing index + company profile</label></div>
+        <div class="chk"><input id="s-insider" type="checkbox" /><label style="margin:0">Insider trades (Form 3/4/5)</label></div>
+        <div class="row">
+          <div><label>From date (insider, optional)</label><input id="s-start" type="date" /></div>
+          <div><label>To date (insider, optional)</label><input id="s-end" type="date" /></div>
+        </div>
+        <button class="btn-primary" onclick="submitSec()">Queue SEC pull</button>
+        <div class="hint">Free SEC EDGAR data into <code>sec_data/</code>. Fundamentals = every reported financial line item. Insider creates one task per filing (can be many); the date filter bounds it. SEC requires a contact User-Agent — set <code>SEC_UA</code> if needed.</div>
+      </div>
+
+      <!-- SEC 13F (by institution CIK) -->
+      <div class="pane" id="pane-sec13f">
+        <label>Institution CIKs (comma or space separated)</label>
+        <input id="f-ciks" value="0001067983" />
+        <div class="row">
+          <div><label>From date (optional)</label><input id="f-start" type="date" /></div>
+          <div><label>To date (optional)</label><input id="f-end" type="date" /></div>
+        </div>
+        <button class="btn-primary" onclick="submitSec13f()">Queue 13F pull</button>
+        <div class="hint">Quarterly institutional holdings into <code>sec_13f/</code>, one file per filing. CIK is the institution's SEC id (e.g. 0001067983 = Berkshire Hathaway). One task per 13F-HR filing.</div>
       </div>
 
       <!-- Decode -->
@@ -326,6 +355,29 @@ async function submitBinance() {
     interval: $('b-interval').value,
     start_date: $('b-start').value,
     end_date: $('b-end').value,
+  });
+  refresh();
+}
+async function submitSec() {
+  const tickers = $('s-tickers').value.split(/[\s,]+/).filter(Boolean).map(s => s.toUpperCase());
+  if (!tickers.length) { alert('Enter at least one ticker.'); return; }
+  await api('POST', '/api/jobs/sec', {
+    tickers,
+    facts: $('s-facts').checked,
+    submissions: $('s-subs').checked,
+    insider: $('s-insider').checked,
+    start_date: $('s-start').value || null,
+    end_date: $('s-end').value || null,
+  });
+  refresh();
+}
+async function submitSec13f() {
+  const ciks = $('f-ciks').value.split(/[\s,]+/).filter(Boolean);
+  if (!ciks.length) { alert('Enter at least one CIK.'); return; }
+  await api('POST', '/api/jobs/sec_13f', {
+    ciks,
+    start_date: $('f-start').value || null,
+    end_date: $('f-end').value || null,
   });
   refresh();
 }

@@ -10,7 +10,7 @@ after the app is restarted.
 
 ## What it does
 
-Four job types, all queued from the same UI:
+Eight job types, all queued from the same UI:
 
 | Job type    | Source                        | Output                    | Resumable unit   |
 |-------------|-------------------------------|---------------------------|------------------|
@@ -18,6 +18,10 @@ Four job types, all queued from the same UI:
 | **Decode**    | local `.bi5` → CSV          | `results_csv/<ticker>/`   | one day CSV      |
 | **yfinance**  | Yahoo Finance               | `company_data/<ticker>/`  | one ticker       |
 | **Binance**   | Binance public klines API   | `crypto_data/<symbol>/`   | one symbol-month |
+| **SEC facts** | SEC EDGAR XBRL companyfacts | `sec_data/<ticker>/`      | one ticker       |
+| **SEC filings** | SEC EDGAR submissions     | `sec_data/<ticker>/`      | one ticker       |
+| **SEC insider** | SEC EDGAR Form 3/4/5      | `sec_data/<ticker>/insider/` | one filing    |
+| **SEC 13F**   | SEC EDGAR 13F-HR            | `sec_13f/<cik>/`          | one filing       |
 
 * **yfinance** saves the actual **OHLCV price history** (`<ticker>_prices_<interval>.csv`)
   plus company info, dividends and splits. Pick a bar interval (1d … 1m) and an
@@ -25,6 +29,31 @@ Four job types, all queued from the same UI:
 * **Binance** pulls crypto **OHLCV klines** (no API key) at any interval, one CSV
   per symbol-month so a long range resumes file-by-file. Rate limits (HTTP 429)
   retry automatically.
+
+### SEC EDGAR
+
+Free, key-less fundamentals and ownership flow that complement Yahoo — queued
+from the **SEC** and **13F** tabs:
+
+* **Fundamentals** (`sec_facts`) — the full XBRL `companyfacts` for each ticker:
+  every financial line item ever reported, flattened to a long
+  `<ticker>_facts.csv` (taxonomy, tag, unit, period, value, fiscal year/period,
+  form, accession), plus a `<ticker>_concepts.csv` index of available concepts.
+* **Filing index** (`sec_submissions`) — the company's complete filing history
+  (`<ticker>_filings.csv`: every form, date, accession, primary document) and a
+  one-row `<ticker>_profile.csv` (SIC, EIN, exchange, fiscal year end, …).
+* **Insider trades** (`sec_insider`) — Form 3/4/5 ownership documents parsed into
+  buy/sell transactions, **one CSV per filing** under `insider/` (owner, role,
+  transaction code, shares, price, post-transaction holdings, derivative legs).
+  Use the date filter to bound how many filings are enumerated.
+* **13F holdings** (`sec_13f`) — quarterly institutional holdings by institution
+  **CIK**, one CSV per 13F-HR filing (issuer, CUSIP, value, shares, voting
+  authority).
+
+SEC requires a descriptive **User-Agent with a contact address** on every
+request and rate-limits to ~10 req/s; all SEC traffic funnels through a shared
+limiter. Set your own contact via the `SEC_UA` environment variable. Ticker→CIK
+resolution uses the official mapping, cached under `sec_data/_meta/`.
 
 ### Library
 
@@ -90,14 +119,17 @@ already `done`/`skipped`, so nothing is re-downloaded needlessly.
 | `DM_CONCURRENCY`  | `12`    | Max download tasks running at once       |
 | `DM_TIMEOUT`      | `30`    | Per-request network timeout (seconds)    |
 | `DM_MAX_ATTEMPTS` | `50`    | Retries before a task is permanently failed |
+| `SEC_UA`          | `quant_data/1.0 (londonhmball@gmail.com)` | Contact User-Agent SEC requires |
+| `SEC_RATE_LIMIT`  | `8`     | Max SEC requests/second (ceiling is 10)  |
 
 ## Layout
 
 ```
 app/
-  config.py    settings + Dukascopy headers
+  config.py    settings + Dukascopy/SEC headers
   db.py        SQLite queue (jobs + tasks, startup recovery)
-  jobs.py      the three job types: plan() + run() per task
+  jobs.py      FX/equity/crypto job types: plan() + run() per task
+  sec.py       SEC EDGAR job types (facts/filings/insider/13F) + rate limiter
   manager.py   asyncio scheduler: worker pool, retry/backoff, pause/resume
   main.py      FastAPI REST API + serves the UI
   static/index.html   single-page web UI (live polling)

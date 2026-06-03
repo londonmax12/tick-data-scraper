@@ -425,3 +425,10 @@ JOB_TYPES = {
     "yfinance": (yfinance_plan, yfinance_run, "yfinance prices + metadata"),
     "binance": (binance_plan, binance_run, "Binance crypto OHLCV"),
 }
+
+# SEC EDGAR job types live in their own module (fundamentals / filings / insider
+# / 13F). Imported last so app.sec can reuse RetryableError from this module
+# without a circular-import problem, then merged into the registry above.
+from . import sec  # noqa: E402
+
+JOB_TYPES.update(sec.SEC_JOB_TYPES)

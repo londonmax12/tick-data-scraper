@@ -12,6 +12,8 @@ RESULTS_DIR = os.path.join(BASE_DIR, "results")          # raw .bi5 files
 CSV_DIR = os.path.join(BASE_DIR, "results_csv")          # decoded CSVs
 COMPANY_DIR = os.path.join(BASE_DIR, "company_data")     # yfinance prices + metadata
 CRYPTO_DIR = os.path.join(BASE_DIR, "crypto_data")       # Binance OHLCV klines
+SEC_DIR = os.path.join(BASE_DIR, "sec_data")             # SEC EDGAR by ticker (facts/filings/insider)
+SEC_13F_DIR = os.path.join(BASE_DIR, "sec_13f")          # SEC 13F institutional holdings by CIK
 
 # How many download tasks run at once across the whole manager.
 MAX_CONCURRENCY = int(os.environ.get("DM_CONCURRENCY", "12"))
@@ -26,6 +28,19 @@ REQUEST_TIMEOUT = float(os.environ.get("DM_TIMEOUT", "30"))
 MAX_ATTEMPTS = int(os.environ.get("DM_MAX_ATTEMPTS", "50"))
 RETRY_BACKOFF_BASE = 1.5
 RETRY_BACKOFF_MAX = 60.0
+
+# SEC EDGAR access. The SEC *requires* a descriptive User-Agent carrying a
+# contact address on every request — anonymous/botty UAs get a 403. It also
+# rate-limits to 10 requests/second per IP, so all SEC traffic funnels through a
+# shared limiter (see app/sec.py) set a touch under the ceiling for safety.
+SEC_USER_AGENT = os.environ.get(
+    "SEC_UA", "quant_data/1.0 (londonhmball@gmail.com)")
+SEC_HEADERS = {
+    "User-Agent": SEC_USER_AGENT,
+    "Accept-Encoding": "gzip, deflate",
+    "Accept": "application/json, text/xml, */*",
+}
+SEC_RATE_LIMIT = float(os.environ.get("SEC_RATE_LIMIT", "8"))  # requests/second
 
 # HTTP headers used for Dukascopy requests (from the original scrape.py).
 DUKAS_HEADERS = {

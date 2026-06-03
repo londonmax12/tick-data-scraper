@@ -25,6 +25,8 @@ LIBRARY_SOURCES = [
     ("results_csv", "Decoded CSVs (results_csv/)", config.CSV_DIR),
     ("company_data", "yfinance (company_data/)", config.COMPANY_DIR),
     ("crypto_data", "Binance crypto (crypto_data/)", config.CRYPTO_DIR),
+    ("sec_data", "SEC EDGAR by ticker (sec_data/)", config.SEC_DIR),
+    ("sec_13f", "SEC 13F holdings (sec_13f/)", config.SEC_13F_DIR),
 ]
 LIBRARY_ROOTS = {key: root for key, _, root in LIBRARY_SOURCES}
 
@@ -68,6 +70,22 @@ class BinanceJob(BaseModel):
     interval: str = "1d"
     start_date: str = Field(..., examples=["2023-01-01"])  # YYYY-MM-DD
     end_date: str = Field(..., examples=["2023-12-31"])
+
+
+class SecFactsJob(BaseModel):
+    tickers: list[str] = Field(..., examples=[["AAPL", "MSFT"]])
+    # Which SEC products to pull for these tickers. Each maps to its own job type.
+    facts: bool = True          # XBRL fundamentals
+    submissions: bool = True    # full filing index + company profile
+    insider: bool = False       # Form 3/4/5 insider transactions (many filings)
+    start_date: str | None = None  # filing-date filter for insider, YYYY-MM-DD
+    end_date: str | None = None
+
+
+class Sec13FJob(BaseModel):
+    ciks: list[str] = Field(..., examples=[["0001067983"]])  # institution CIKs
+    start_date: str | None = None  # filing-date filter, YYYY-MM-DD
+    end_date: str | None = None
 
 
 # ---- helpers ------------------------------------------------------------
@@ -128,6 +146,35 @@ def create_binance(body: BinanceJob):
     title = (f"Binance ({n} symbols, {body.interval}) "
              f"{body.start_date}→{body.end_date}")
     jid = _db().create_job("binance", title, body.model_dump())
+    return {"id": jid}
+
+
+@app.post("/api/jobs/sec")
+def create_sec(body: SecFactsJob):
+    """Queue one job per selected SEC product for a batch of tickers."""
+    n = len(body.tickers)
+    common = {"tickers": body.tickers,
+              "start_date": body.start_date, "end_date": body.end_date}
+    created = []
+    if body.facts:
+        created.append({"type": "sec_facts", "id": _db().create_job(
+            "sec_facts", f"SEC fundamentals ({n} tickers)", common)})
+    if body.submissions:
+        created.append({"type": "sec_submissions", "id": _db().create_job(
+            "sec_submissions", f"SEC filings index ({n} tickers)", common)})
+    if body.insider:
+        created.append({"type": "sec_insider", "id": _db().create_job(
+            "sec_insider", f"SEC insider trades ({n} tickers)", common)})
+    if not created:
+        raise HTTPException(400, "select at least one SEC product")
+    return {"jobs": created}
+
+
+@app.post("/api/jobs/sec_13f")
+def create_sec_13f(body: Sec13FJob):
+    n = len(body.ciks)
+    jid = _db().create_job("sec_13f", f"SEC 13F holdings ({n} institutions)",
+                           body.model_dump())
     return {"id": jid}
 
 

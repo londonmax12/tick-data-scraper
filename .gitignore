@@ -7,6 +7,8 @@ results/
 results_csv/
 company_data/
 crypto_data/
+sec_data/
+sec_13f/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
