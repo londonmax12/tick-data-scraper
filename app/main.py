@@ -27,6 +27,7 @@ LIBRARY_SOURCES = [
     ("crypto_data", "Binance crypto (crypto_data/)", config.CRYPTO_DIR),
     ("sec_data", "SEC EDGAR by ticker (sec_data/)", config.SEC_DIR),
     ("sec_13f", "SEC 13F holdings (sec_13f/)", config.SEC_13F_DIR),
+    ("fred_data", "FRED macro series (fred_data/)", config.FRED_DIR),
 ]
 LIBRARY_ROOTS = {key: root for key, _, root in LIBRARY_SOURCES}
 
@@ -86,6 +87,25 @@ class Sec13FJob(BaseModel):
     ciks: list[str] = Field(..., examples=[["0001067983"]])  # institution CIKs
     start_date: str | None = None  # filing-date filter, YYYY-MM-DD
     end_date: str | None = None
+
+
+class FredJob(BaseModel):
+    # At least one of series_ids / release_id / category_id / search_text.
+    series_ids: list[str] = Field(default_factory=list, examples=[["UNRATE", "GDP"]])
+    release_id: str | None = None    # expand a FRED release into its series
+    category_id: str | None = None   # expand a FRED category into its series
+    search_text: str | None = None   # expand a full-text search into its series
+    max_series: int = 1000           # cap on a discovery fan-out
+    # Observation transform (server-side).
+    units: str = "lin"               # lin|chg|ch1|pch|pc1|pca|cch|cca|log
+    frequency: str | None = None     # d|w|bw|m|q|sa|a (re-aggregate); blank = native
+    aggregation_method: str = "avg"  # avg|sum|eop (used when frequency is set)
+    observation_start: str | None = None  # YYYY-MM-DD
+    observation_end: str | None = None
+    # ALFRED point-in-time (vintages); leave blank for latest revised data.
+    realtime_start: str | None = None
+    realtime_end: str | None = None
+    vintage_dates: list[str] = Field(default_factory=list)
 
 
 # ---- helpers ------------------------------------------------------------
@@ -175,6 +195,26 @@ def create_sec_13f(body: Sec13FJob):
     n = len(body.ciks)
     jid = _db().create_job("sec_13f", f"SEC 13F holdings ({n} institutions)",
                            body.model_dump())
+    return {"id": jid}
+
+
+@app.post("/api/jobs/fred")
+def create_fred(body: FredJob):
+    if not (body.series_ids or body.release_id or body.category_id
+            or body.search_text):
+        raise HTTPException(400, "provide series ids, a release/category id, or "
+                                 "search text")
+    # Describe the job by whatever drives it (explicit ids vs. a discovery).
+    if body.series_ids:
+        what = f"{len(body.series_ids)} series"
+    elif body.search_text:
+        what = f"search '{body.search_text}'"
+    elif body.release_id:
+        what = f"release {body.release_id}"
+    else:
+        what = f"category {body.category_id}"
+    suffix = body.units + (f"/{body.frequency}" if body.frequency else "")
+    jid = _db().create_job("fred", f"FRED {what} ({suffix})", body.model_dump())
     return {"id": jid}
 
 
@@ -329,7 +369,7 @@ def library_preview(rel: str, limit: int = 200):
 
 # Preferred y-columns for the quick chart, best first (price-like across all
 # our CSV shapes: yfinance prices, crypto klines, decoded ticks).
-_CHART_COLUMNS = ["close", "Close", "bid", "ask", "Open", "open"]
+_CHART_COLUMNS = ["close", "Close", "bid", "ask", "Open", "open", "value"]
 _CHART_SCAN_CAP = 500_000  # rows read before we stop (then downsample)
 
 

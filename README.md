@@ -10,7 +10,7 @@ after the app is restarted.
 
 ## What it does
 
-Eight job types, all queued from the same UI:
+Nine job types, all queued from the same UI:
 
 | Job type    | Source                        | Output                    | Resumable unit   |
 |-------------|-------------------------------|---------------------------|------------------|
@@ -22,6 +22,7 @@ Eight job types, all queued from the same UI:
 | **SEC filings** | SEC EDGAR submissions     | `sec_data/<ticker>/`      | one ticker       |
 | **SEC insider** | SEC EDGAR Form 3/4/5      | `sec_data/<ticker>/insider/` | one filing    |
 | **SEC 13F**   | SEC EDGAR 13F-HR            | `sec_13f/<cik>/`          | one filing       |
+| **FRED**      | FRED (St. Louis Fed) API   | `fred_data/<series>/`     | one series       |
 
 * **yfinance** saves the actual **OHLCV price history** (`<ticker>_prices_<interval>.csv`)
   plus company info, dividends and splits. Pick a bar interval (1d … 1m) and an
@@ -54,6 +55,32 @@ SEC requires a descriptive **User-Agent with a contact address** on every
 request and rate-limits to ~10 req/s; all SEC traffic funnels through a shared
 limiter. Set your own contact via the `SEC_UA` environment variable. Ticker→CIK
 resolution uses the official mapping, cached under `sec_data/_meta/`.
+
+### FRED (macro data)
+
+Macroeconomic time series from the **Federal Reserve Bank of St. Louis** — queued
+from the **FRED** tab into `fred_data/<series>/`, one CSV per series. More than a
+plain CSV grab:
+
+* **Discovery** — instead of listing series ids by hand, expand a **release**, a
+  **category**, or a free-text **search** into its member series; the planner
+  dedups them against any explicit ids and queues one task each (capped by
+  *Max series*).
+* **Transformations** — pull observations in any of FRED's built-in **units**
+  (levels, change, % change, year-over-year, log, …), optionally **re-aggregate**
+  to a coarser **frequency** (`avg`/`sum`/`eop`), and bound to an observation
+  date window — all server-side. Each (units, frequency) variant is stored as its
+  own `<series>_<units>_<freq>.csv` so they never clobber each other.
+* **Vintages (ALFRED)** — a real-time window pulls **point-in-time** data as it
+  was first published (extra `realtime_start`/`realtime_end` columns), the right
+  way to avoid look-ahead bias from later revisions.
+* **Metadata** — every series also gets a one-row `<series>_meta.csv` (title,
+  native units/frequency, seasonal adjustment, span, last update, notes).
+
+FRED **requires a free API key** — get one at
+<https://fred.stlouisfed.org/docs/api/api_key.html> and set it via the
+`FRED_API_KEY` environment variable. All FRED traffic funnels through a shared
+limiter kept under FRED's 120 req/min ceiling.
 
 ### Library
 
@@ -121,6 +148,8 @@ already `done`/`skipped`, so nothing is re-downloaded needlessly.
 | `DM_MAX_ATTEMPTS` | `50`    | Retries before a task is permanently failed |
 | `SEC_UA`          | `quant_data/1.0 (londonhmball@gmail.com)` | Contact User-Agent SEC requires |
 | `SEC_RATE_LIMIT`  | `8`     | Max SEC requests/second (ceiling is 10)  |
+| `FRED_API_KEY`    | _(none)_ | Free FRED API key (required for FRED jobs) |
+| `FRED_RATE_LIMIT` | `2`     | Max FRED requests/second (ceiling is 120/min) |
 
 ## Layout
 
@@ -130,6 +159,7 @@ app/
   db.py        SQLite queue (jobs + tasks, startup recovery)
   jobs.py      FX/equity/crypto job types: plan() + run() per task
   sec.py       SEC EDGAR job types (facts/filings/insider/13F) + rate limiter
+  fred.py      FRED job type (macro series) + discovery, transforms, rate limiter
   manager.py   asyncio scheduler: worker pool, retry/backoff, pause/resume
   main.py      FastAPI REST API + serves the UI
   static/index.html   single-page web UI (live polling)

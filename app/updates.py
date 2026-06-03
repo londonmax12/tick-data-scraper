@@ -18,6 +18,7 @@ _ROOTS = {
     "crypto_data": config.CRYPTO_DIR,
     "sec_data": config.SEC_DIR,
     "sec_13f": config.SEC_13F_DIR,
+    "fred_data": config.FRED_DIR,
 }
 
 
@@ -65,6 +66,8 @@ def enqueue_update(database, rel: str) -> dict:
         return _update_sec(database, name, d)
     if source == "sec_13f":
         return _update_sec_13f(database, name)
+    if source == "fred_data":
+        return _update_fred(database, name, d)
     raise UpdateError("unsupported dataset")
 
 
@@ -188,6 +191,42 @@ def _update_sec(database, ticker: str, d: str) -> dict:
 
     if not jobs:
         raise UpdateError("no SEC products to update for this ticker")
+    return {"jobs": jobs}
+
+
+def _update_fred(database, series_id: str, d: str) -> dict:
+    """Re-pull every (units, frequency) variant already on disk for a series.
+
+    A series is small and gets revised in place, so the cleanest refresh is a
+    full re-download: each observations file encodes its transform in the name
+    (``<id>_<units>_<freq>.csv``), so we delete it and re-queue that exact
+    request. The ``_meta.csv`` sidecar is left for the run to rewrite.
+    """
+    prefix = f"{series_id}_"
+    jobs = []
+    seen = set()
+    for fn in os.listdir(d):
+        if not fn.endswith(".csv") or not fn.startswith(prefix):
+            continue
+        if fn == f"{series_id}_meta.csv":
+            continue
+        tag = fn[len(prefix):-len(".csv")]      # "<units>_<freq>"
+        if "_" not in tag or tag in seen:
+            continue
+        seen.add(tag)
+        units, freq_tag = tag.split("_", 1)
+        frequency = None if freq_tag == "orig" else freq_tag
+        try:
+            os.remove(os.path.join(d, fn))
+        except OSError:
+            pass
+        params = {"series_ids": [series_id], "units": units,
+                  "frequency": frequency, "aggregation_method": "avg"}
+        title = f"Update FRED {series_id} ({tag.replace('_', '/')})"
+        jobs.append({"id": database.create_job("fred", title, params),
+                     "title": title})
+    if not jobs:
+        raise UpdateError("no FRED series files to refresh")
     return {"jobs": jobs}
 
 

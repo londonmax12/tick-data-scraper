@@ -145,6 +145,7 @@
         <div class="tab" data-tab="binance">Binance</div>
         <div class="tab" data-tab="sec">SEC</div>
         <div class="tab" data-tab="sec13f">13F</div>
+        <div class="tab" data-tab="fred">FRED</div>
         <div class="tab" data-tab="decode">Decode</div>
       </div>
 
@@ -235,6 +236,67 @@
         </div>
         <button class="btn-primary" onclick="submitSec13f()">Queue 13F pull</button>
         <div class="hint">Quarterly institutional holdings into <code>sec_13f/</code>, one file per filing. CIK is the institution's SEC id (e.g. 0001067983 = Berkshire Hathaway). One task per 13F-HR filing.</div>
+      </div>
+
+      <!-- FRED (macro series) -->
+      <div class="pane" id="pane-fred">
+        <label>Series IDs (comma or space separated)</label>
+        <input id="fr-series" value="UNRATE, GDP, CPIAUCSL, DGS10" />
+        <div class="row">
+          <div>
+            <label>Units (transform)</label>
+            <select id="fr-units">
+              <option value="lin" selected>lin — levels</option>
+              <option value="chg">chg — change</option>
+              <option value="ch1">ch1 — change yr ago</option>
+              <option value="pch">pch — % change</option>
+              <option value="pc1">pc1 — % change yr ago</option>
+              <option value="pca">pca — compounded annual rate</option>
+              <option value="cch">cch — continuously compounded</option>
+              <option value="cca">cca — cc annual rate</option>
+              <option value="log">log — natural log</option>
+            </select>
+          </div>
+          <div>
+            <label>Frequency (re-aggregate)</label>
+            <select id="fr-freq">
+              <option value="" selected>native</option>
+              <option value="d">daily</option>
+              <option value="w">weekly</option>
+              <option value="m">monthly</option>
+              <option value="q">quarterly</option>
+              <option value="sa">semiannual</option>
+              <option value="a">annual</option>
+            </select>
+          </div>
+        </div>
+        <label>Aggregation (when re-aggregating)</label>
+        <select id="fr-agg">
+          <option value="avg" selected>avg — average</option>
+          <option value="sum">sum</option>
+          <option value="eop">eop — end of period</option>
+        </select>
+        <div class="row">
+          <div><label>Obs. start (optional)</label><input id="fr-start" type="date" /></div>
+          <div><label>Obs. end (optional)</label><input id="fr-end" type="date" /></div>
+        </div>
+        <details style="margin-top:10px">
+          <summary class="hint" style="cursor:pointer">Discovery &amp; vintages (advanced)</summary>
+          <label>Search text → series</label>
+          <input id="fr-search" placeholder="e.g. unemployment rate state" />
+          <div class="row">
+            <div><label>Release ID</label><input id="fr-release" placeholder="e.g. 53" /></div>
+            <div><label>Category ID</label><input id="fr-category" placeholder="e.g. 32992" /></div>
+          </div>
+          <label>Max series from a discovery</label>
+          <input id="fr-max" type="number" min="1" value="100" />
+          <div class="row">
+            <div><label>Vintage from (ALFRED)</label><input id="fr-rtstart" type="date" /></div>
+            <div><label>Vintage to (ALFRED)</label><input id="fr-rtend" type="date" /></div>
+          </div>
+        </details>
+        <button class="btn-primary" onclick="submitFred()">Queue FRED pull</button>
+        <div class="hint">Federal Reserve (St. Louis) macro series into <code>fred_data/</code>, one CSV per series. Needs a free key in the <code>FRED_API_KEY</code> env var. A search / release / category id fans out into its member series. A vintage window pulls point-in-time data (as first published) for bias-free backtests.</div>
       </div>
 
       <!-- Decode -->
@@ -378,6 +440,30 @@ async function submitSec13f() {
     ciks,
     start_date: $('f-start').value || null,
     end_date: $('f-end').value || null,
+  });
+  refresh();
+}
+async function submitFred() {
+  const series_ids = $('fr-series').value.split(/[\s,]+/).filter(Boolean).map(s => s.toUpperCase());
+  const search_text = $('fr-search').value.trim();
+  const release_id = $('fr-release').value.trim();
+  const category_id = $('fr-category').value.trim();
+  if (!series_ids.length && !search_text && !release_id && !category_id) {
+    alert('Enter series IDs, or a search / release id / category id.'); return;
+  }
+  await api('POST', '/api/jobs/fred', {
+    series_ids,
+    search_text: search_text || null,
+    release_id: release_id || null,
+    category_id: category_id || null,
+    max_series: +($('fr-max').value || 100),
+    units: $('fr-units').value,
+    frequency: $('fr-freq').value || null,
+    aggregation_method: $('fr-agg').value,
+    observation_start: $('fr-start').value || null,
+    observation_end: $('fr-end').value || null,
+    realtime_start: $('fr-rtstart').value || null,
+    realtime_end: $('fr-rtend').value || null,
   });
   refresh();
 }

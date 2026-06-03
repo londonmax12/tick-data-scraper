@@ -4,3 +4,4 @@ uvicorn[standard]>=0.29
 requests>=2.31
 yfinance>=0.2.40
 pandas>=2.0
+python-dotenv>=1.0

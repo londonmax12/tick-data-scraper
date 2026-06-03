@@ -426,9 +426,11 @@ JOB_TYPES = {
     "binance": (binance_plan, binance_run, "Binance crypto OHLCV"),
 }
 
-# SEC EDGAR job types live in their own module (fundamentals / filings / insider
-# / 13F). Imported last so app.sec can reuse RetryableError from this module
-# without a circular-import problem, then merged into the registry above.
+# SEC EDGAR and FRED job types live in their own modules (each has its own
+# rate limiter / API specifics). Imported last so they can reuse RetryableError
+# from this module without a circular-import problem, then merged in above.
 from . import sec  # noqa: E402
+from . import fred  # noqa: E402
 
 JOB_TYPES.update(sec.SEC_JOB_TYPES)
+JOB_TYPES.update(fred.FRED_JOB_TYPES)
