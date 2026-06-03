@@ -143,6 +143,7 @@
         <div class="tab active" data-tab="dukascopy">Dukascopy</div>
         <div class="tab" data-tab="yfinance">yfinance</div>
         <div class="tab" data-tab="binance">Binance</div>
+        <div class="tab" data-tab="futures">Futures</div>
         <div class="tab" data-tab="sec">SEC</div>
         <div class="tab" data-tab="sec13f">13F</div>
         <div class="tab" data-tab="fred">FRED</div>
@@ -210,6 +211,63 @@
         </div>
         <button class="btn-primary" onclick="submitBinance()">Queue download</button>
         <div class="hint">Crypto OHLCV from Binance's public API into <code>crypto_data/</code>. One task per symbol-month; rate limits retry automatically.</div>
+      </div>
+
+      <!-- Binance futures (USD-M / COIN-M derivatives) -->
+      <div class="pane" id="pane-futures">
+        <div class="row">
+          <div>
+            <label>Market</label>
+            <select id="ft-market">
+              <option value="usdm" selected>USD-M (USDT/USDC-margined)</option>
+              <option value="coinm">COIN-M (coin-margined inverse)</option>
+            </select>
+          </div>
+          <div>
+            <label>Kline interval</label>
+            <select id="ft-interval">
+              <option value="1d">1d</option>
+              <option value="4h">4h</option>
+              <option value="1h" selected>1h</option>
+              <option value="15m">15m</option>
+              <option value="5m">5m</option>
+              <option value="1m">1m</option>
+              <option value="1w">1w</option>
+            </select>
+          </div>
+        </div>
+        <label>Symbols (comma or space separated)</label>
+        <input id="ft-symbols" value="BTCUSDT, ETHUSDT" />
+        <div class="row">
+          <div><label>Start date</label><input id="ft-start" type="date" value="2023-01-01" /></div>
+          <div><label>End date</label><input id="ft-end" type="date" value="2023-12-31" /></div>
+        </div>
+        <label>Price series (klines)</label>
+        <div class="chk"><input id="ft-k-ohlcv" type="checkbox" checked /><label style="margin:0">OHLCV (tradeable)</label></div>
+        <div class="chk"><input id="ft-k-mark" type="checkbox" /><label style="margin:0">Mark price</label></div>
+        <div class="chk"><input id="ft-k-index" type="checkbox" /><label style="margin:0">Index price</label></div>
+        <div class="chk"><input id="ft-k-premium" type="checkbox" /><label style="margin:0">Premium index</label></div>
+        <div class="chk" style="margin-top:14px"><input id="ft-funding" type="checkbox" checked /><label style="margin:0">Funding-rate history</label></div>
+        <details style="margin-top:10px">
+          <summary class="hint" style="cursor:pointer">Positioning &amp; flow metrics (rolling ~30 days)</summary>
+          <label>Metrics period</label>
+          <select id="ft-period">
+            <option value="5m" selected>5m</option>
+            <option value="15m">15m</option>
+            <option value="30m">30m</option>
+            <option value="1h">1h</option>
+            <option value="4h">4h</option>
+            <option value="12h">12h</option>
+            <option value="1d">1d</option>
+          </select>
+          <div class="chk"><input id="ft-m-oi" type="checkbox" /><label style="margin:0">Open interest</label></div>
+          <div class="chk"><input id="ft-m-top-acc" type="checkbox" /><label style="margin:0">Top trader long/short (accounts)</label></div>
+          <div class="chk"><input id="ft-m-top-pos" type="checkbox" /><label style="margin:0">Top trader long/short (positions)</label></div>
+          <div class="chk"><input id="ft-m-global" type="checkbox" /><label style="margin:0">Global long/short (accounts)</label></div>
+          <div class="chk"><input id="ft-m-taker" type="checkbox" /><label style="margin:0">Taker buy/sell volume</label></div>
+        </details>
+        <button class="btn-primary" onclick="submitFutures()">Queue futures pull</button>
+        <div class="hint">Binance derivatives into <code>crypto_futures_data/&lt;symbol&gt;/</code>: klines (one CSV per kind-month), <code>funding.csv</code>, and <code>metrics/</code> sentiment series. Klines/funding cover the full date range; the /futures/data metrics are a server-side rolling ~30-day window. Each product is queued as its own job. No API key needed.</div>
       </div>
 
       <!-- SEC EDGAR (by ticker) -->
@@ -452,6 +510,35 @@ async function submitBinance() {
     interval: $('b-interval').value,
     start_date: $('b-start').value,
     end_date: $('b-end').value,
+  });
+  refresh();
+}
+async function submitFutures() {
+  const symbols = $('ft-symbols').value.split(/[\s,]+/).filter(Boolean).map(s => s.toUpperCase());
+  if (!symbols.length) { alert('Enter at least one symbol.'); return; }
+  const kinds = [
+    ['ft-k-ohlcv', 'ohlcv'], ['ft-k-mark', 'mark'],
+    ['ft-k-index', 'index'], ['ft-k-premium', 'premium'],
+  ].filter(([id]) => $(id).checked).map(([, k]) => k);
+  const metrics = [
+    ['ft-m-oi', 'open_interest'], ['ft-m-top-acc', 'top_accounts'],
+    ['ft-m-top-pos', 'top_positions'], ['ft-m-global', 'global_accounts'],
+    ['ft-m-taker', 'taker'],
+  ].filter(([id]) => $(id).checked).map(([, m]) => m);
+  const funding = $('ft-funding').checked;
+  if (!kinds.length && !funding && !metrics.length) {
+    alert('Select klines, funding, or at least one metric.'); return;
+  }
+  await api('POST', '/api/jobs/binance_futures', {
+    market: $('ft-market').value,
+    symbols,
+    start_date: $('ft-start').value,
+    end_date: $('ft-end').value,
+    kinds,
+    interval: $('ft-interval').value,
+    funding,
+    metrics,
+    period: $('ft-period').value,
   });
   refresh();
 }

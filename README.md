@@ -10,7 +10,7 @@ after the app is restarted.
 
 ## What it does
 
-Ten job types, all queued from the same UI:
+Thirteen job types, all queued from the same UI:
 
 | Job type    | Source                        | Output                    | Resumable unit   |
 |-------------|-------------------------------|---------------------------|------------------|
@@ -18,6 +18,7 @@ Ten job types, all queued from the same UI:
 | **Decode**    | local `.bi5` → CSV          | `results_csv/<ticker>/`   | one day CSV      |
 | **yfinance**  | Yahoo Finance               | `company_data/<ticker>/`  | one ticker       |
 | **Binance**   | Binance public klines API   | `crypto_data/<symbol>/`   | one symbol-month |
+| **Binance futures** | Binance USD-M / COIN-M derivatives | `crypto_futures_data/<symbol>/` | symbol-month / symbol / symbol-metric |
 | **SEC facts** | SEC EDGAR XBRL companyfacts | `sec_data/<ticker>/`      | one ticker       |
 | **SEC filings** | SEC EDGAR submissions     | `sec_data/<ticker>/`      | one ticker       |
 | **SEC insider** | SEC EDGAR Form 3/4/5      | `sec_data/<ticker>/insider/` | one filing    |
@@ -31,6 +32,35 @@ Ten job types, all queued from the same UI:
 * **Binance** pulls crypto **OHLCV klines** (no API key) at any interval, one CSV
   per symbol-month so a long range resumes file-by-file. Rate limits (HTTP 429)
   retry automatically.
+
+### Binance futures (derivatives)
+
+The spot Binance source above only has OHLCV; futures research needs the
+derivatives-native data spot doesn't have. Queued from the **Futures** tab into
+`crypto_futures_data/<symbol>/`, key-less, across both Binance futures markets —
+**USD-M** (USDT/USDC-margined, e.g. `BTCUSDT`) and **COIN-M** (coin-margined
+inverse, e.g. `BTCUSD_PERP`). One UI request fans out into up to three jobs:
+
+* **Price klines** (`binance_futures`) — not just tradeable **OHLCV** but
+  **mark-price**, **index-price** and **premium-index** klines (the basis and
+  funding-prediction inputs), each into its own folder (`klines/`, `mark/`,
+  `index/`, `premium/`), one CSV per `<interval>/<YYYY-MM>` so a long range
+  resumes file-by-file.
+* **Funding rate** (`binance_funding`) — the realised 8-hourly funding each
+  perpetual paid over the whole requested range, paged on `startTime`, into
+  `funding.csv`.
+* **Positioning & flow** (`binance_metrics`) — the Binance `/futures/data`
+  family: **open interest** history, **top-trader** long/short (by accounts and
+  by positions), **global** account long/short, and **taker** buy/sell volume.
+  These are a server-side rolling **~30-day** window, period-bucketed (5m … 1d);
+  the runner pages them oldest-first and writes columns from the union of fields
+  each endpoint returns (they differ), `time` first, into `metrics/<metric>_<period>.csv`.
+
+The two markets differ in host, symbol shape, and how the `/futures/data`
+endpoints are addressed (`symbol` vs `pair`+`contractType`); a small market table
+absorbs the difference so every dataset works on both. All futures traffic
+funnels through a shared limiter kept under Binance's per-IP weight budget; a
+`_market.csv` marker per symbol lets **Update** re-issue the right requests.
 
 ### SEC EDGAR
 
@@ -183,6 +213,7 @@ already `done`/`skipped`, so nothing is re-downloaded needlessly.
 | `FRED_RATE_LIMIT` | `2`     | Max FRED requests/second (ceiling is 120/min) |
 | `CFTC_APP_TOKEN`  | _(none)_ | Optional Socrata app token (lifts CFTC rate limit) |
 | `CFTC_RATE_LIMIT` | `5`     | Max CFTC requests/second                 |
+| `BINANCE_FUTURES_RATE_LIMIT` | `10` | Max Binance-futures requests/second (per-IP weight budget) |
 
 ## Layout
 
@@ -194,6 +225,7 @@ app/
   sec.py       SEC EDGAR job types (facts/filings/insider/13F) + rate limiter
   fred.py      FRED job type (macro series) + discovery, transforms, rate limiter
   cftc.py      CFTC Commitments of Traders job type + report families, discovery, SoQL
+  futures.py   Binance USD-M/COIN-M futures: klines/funding/OI/long-short/taker + rate limiter
   manager.py   asyncio scheduler: worker pool, retry/backoff, pause/resume
   main.py      FastAPI REST API + serves the UI
   static/index.html   single-page web UI (live polling)

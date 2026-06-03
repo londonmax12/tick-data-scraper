@@ -55,6 +55,7 @@ SEC_DIR = os.path.join(BASE_DIR, "sec_data")             # SEC EDGAR by ticker (
 SEC_13F_DIR = os.path.join(BASE_DIR, "sec_13f")          # SEC 13F institutional holdings by CIK
 FRED_DIR = os.path.join(BASE_DIR, "fred_data")           # FRED macro series by series id
 CFTC_DIR = os.path.join(BASE_DIR, "cftc_data")           # CFTC Commitments of Traders by contract market code
+FUTURES_DIR = os.path.join(BASE_DIR, "crypto_futures_data")  # Binance futures: klines/funding/OI/sentiment by symbol
 
 # How many download tasks run at once across the whole manager.
 MAX_CONCURRENCY = _env_int("DM_CONCURRENCY", 12)
@@ -107,6 +108,15 @@ CFTC_HEADERS = {
     "Accept-Encoding": "gzip, deflate",
     "Accept": "application/json",
 }
+
+# Binance USD-M / COIN-M futures access (api: fapi.binance.com / dapi.binance.com).
+# Keyless for the public market-data endpoints used here (klines, funding, open
+# interest, long/short sentiment, taker flow). Binance enforces a per-IP request
+# *weight* budget per minute and bans (HTTP 418) IPs that ignore 429s, so all
+# futures traffic funnels through a shared limiter (see app/futures.py) kept to a
+# polite few requests/second. The /futures/data sentiment endpoints are stricter,
+# which the limiter also covers.
+BINANCE_FUTURES_RATE_LIMIT = _env_float("BINANCE_FUTURES_RATE_LIMIT", 10)  # requests/second
 
 # HTTP headers used for Dukascopy requests (from the original scrape.py).
 DUKAS_HEADERS = {

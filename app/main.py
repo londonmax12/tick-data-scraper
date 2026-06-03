@@ -14,7 +14,7 @@ from starlette.background import BackgroundTask
 
 from . import config, db, manager, updates
 from .jobs import JOB_TYPES
-from . import cftc  # after .jobs: the leaf source modules load via jobs (avoids a cycle)
+from . import cftc, futures  # after .jobs: leaf source modules load via jobs (avoids a cycle)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -26,6 +26,7 @@ LIBRARY_SOURCES = [
     ("results_csv", "Decoded CSVs (results_csv/)", config.CSV_DIR),
     ("company_data", "yfinance (company_data/)", config.COMPANY_DIR),
     ("crypto_data", "Binance crypto (crypto_data/)", config.CRYPTO_DIR),
+    ("crypto_futures_data", "Binance futures (crypto_futures_data/)", config.FUTURES_DIR),
     ("sec_data", "SEC EDGAR by ticker (sec_data/)", config.SEC_DIR),
     ("sec_13f", "SEC 13F holdings (sec_13f/)", config.SEC_13F_DIR),
     ("fred_data", "FRED macro series (fred_data/)", config.FRED_DIR),
@@ -73,6 +74,24 @@ class BinanceJob(BaseModel):
     interval: str = "1d"
     start_date: str = Field(..., examples=["2023-01-01"])  # YYYY-MM-DD
     end_date: str = Field(..., examples=["2023-12-31"])
+
+
+class BinanceFuturesJob(BaseModel):
+    market: str = "usdm"  # usdm (USDT/USDC-margined) | coinm (coin-margined)
+    symbols: list[str] = Field(..., examples=[["BTCUSDT", "ETHUSDT"]])
+    start_date: str = Field(..., examples=["2023-01-01"])  # YYYY-MM-DD
+    end_date: str = Field(..., examples=["2023-12-31"])
+    # Price-series klines: which series, at what bar size. Empty kinds = none.
+    kinds: list[str] = Field(default_factory=lambda: ["ohlcv"],
+                             examples=[["ohlcv", "mark", "index", "premium"]])
+    interval: str = "1h"
+    # Funding-rate history (one funding.csv per symbol).
+    funding: bool = True
+    # /futures/data sentiment metrics (rolling ~30 days) at a period bucket.
+    metrics: list[str] = Field(default_factory=list,
+                               examples=[["open_interest", "top_accounts", "taker"]])
+    period: str = "5m"
+    contract_type: str = "PERPETUAL"  # COIN-M only: PERPETUAL | CURRENT_QUARTER | …
 
 
 class SecFactsJob(BaseModel):
@@ -185,6 +204,46 @@ def create_binance(body: BinanceJob):
              f"{body.start_date}→{body.end_date}")
     jid = _db().create_job("binance", title, body.model_dump())
     return {"id": jid}
+
+
+@app.post("/api/jobs/binance_futures")
+def create_binance_futures(body: BinanceFuturesJob):
+    """Queue one job per selected futures product (klines / funding / metrics)."""
+    if body.market not in futures.MARKETS:
+        raise HTTPException(400, f"unknown market '{body.market}'")
+    if not body.symbols:
+        raise HTTPException(400, "select at least one symbol")
+    kinds = [k for k in body.kinds if k in futures.KLINE_KINDS]
+    metrics = [m for m in body.metrics if m in futures.METRICS]
+    if body.kinds and not kinds:
+        raise HTTPException(400, "unknown kline kind(s) selected")
+    if body.metrics and not metrics:
+        raise HTTPException(400, "unknown metric(s) selected")
+    if not (kinds or body.funding or metrics):
+        raise HTTPException(400, "select klines, funding, or at least one metric")
+    if metrics and body.period not in futures.METRIC_PERIODS:
+        raise HTTPException(400, f"unknown metrics period '{body.period}'")
+
+    n = len(body.symbols)
+    tag = futures.MARKETS[body.market]["label"]
+    common = body.model_dump()
+    created = []
+    if kinds:
+        params = {**common, "kinds": kinds}
+        title = (f"Binance futures klines [{tag}] ({n} symbols, "
+                 f"{'/'.join(kinds)} {body.interval}) {body.start_date}→{body.end_date}")
+        created.append({"type": "binance_futures",
+                        "id": _db().create_job("binance_futures", title, params)})
+    if body.funding:
+        title = f"Binance funding [{tag}] ({n} symbols) {body.start_date}→{body.end_date}"
+        created.append({"type": "binance_funding",
+                        "id": _db().create_job("binance_funding", title, common)})
+    if metrics:
+        params = {**common, "metrics": metrics}
+        title = f"Binance futures metrics [{tag}] ({n} symbols, {'/'.join(metrics)} {body.period})"
+        created.append({"type": "binance_metrics",
+                        "id": _db().create_job("binance_metrics", title, params)})
+    return {"jobs": created}
 
 
 @app.post("/api/jobs/sec")
@@ -420,7 +479,8 @@ def library_preview(rel: str, limit: int = 200):
 # Preferred y-columns for the quick chart, best first (price-like across all
 # our CSV shapes: yfinance prices, crypto klines, decoded ticks).
 _CHART_COLUMNS = ["close", "Close", "bid", "ask", "Open", "open", "value",
-                  "open_interest_all"]
+                  "open_interest_all", "sumOpenInterest", "longShortRatio",
+                  "buySellRatio", "funding_rate"]
 _CHART_SCAN_CAP = 500_000  # rows read before we stop (then downsample)
 
 

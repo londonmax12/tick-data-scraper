@@ -432,7 +432,9 @@ JOB_TYPES = {
 from . import sec  # noqa: E402
 from . import fred  # noqa: E402
 from . import cftc  # noqa: E402
+from . import futures  # noqa: E402
 
 JOB_TYPES.update(sec.SEC_JOB_TYPES)
 JOB_TYPES.update(fred.FRED_JOB_TYPES)
 JOB_TYPES.update(cftc.CFTC_JOB_TYPES)
+JOB_TYPES.update(futures.FUTURES_JOB_TYPES)

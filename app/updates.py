@@ -16,6 +16,7 @@ _ROOTS = {
     "results_csv": config.CSV_DIR,
     "company_data": config.COMPANY_DIR,
     "crypto_data": config.CRYPTO_DIR,
+    "crypto_futures_data": config.FUTURES_DIR,
     "sec_data": config.SEC_DIR,
     "sec_13f": config.SEC_13F_DIR,
     "fred_data": config.FRED_DIR,
@@ -59,6 +60,8 @@ def enqueue_update(database, rel: str) -> dict:
         return _update_dukascopy(database, name, d)
     if source == "crypto_data":
         return _update_binance(database, name, d)
+    if source == "crypto_futures_data":
+        return _update_futures(database, name, d)
     if source == "company_data":
         return _update_yfinance(database, name, d)
     if source == "results_csv":
@@ -125,6 +128,106 @@ def _update_binance(database, symbol: str, d: str) -> dict:
                      "title": title})
     if not jobs:
         raise UpdateError("no crypto months to extend")
+    return {"jobs": jobs}
+
+
+def _read_futures_market(d: str) -> str:
+    """The market a futures dataset belongs to, from its ``_market.csv`` sidecar;
+    defaults to USD-M if the marker is missing or unreadable."""
+    import csv  # local: updates.py is otherwise csv-free
+    try:
+        with open(os.path.join(d, "_market.csv"), newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+        if len(rows) >= 2 and rows[1]:
+            return rows[1][0].strip().lower() or "usdm"
+    except OSError:
+        pass
+    return "usdm"
+
+
+def _update_futures(database, symbol: str, d: str) -> dict:
+    """Carry every futures product already on disk for a symbol forward to today.
+
+    Klines (each kind × interval) re-fetch from their last month — the partial
+    latest month file is dropped first so it re-downloads complete, exactly like
+    the spot Binance updater. Funding and the /futures/data sentiment metrics get
+    a full refresh (small, revised in place): delete and re-queue the same request.
+    The market is recovered from the ``_market.csv`` marker the runner wrote.
+    """
+    from . import futures  # local: leaf source module loads via jobs (avoids a cycle)
+    today = _today()
+    market = _read_futures_market(d)
+    jobs = []
+
+    # --- price-series klines: one job per (kind, interval) ---
+    dir_to_kind = {spec["dir"]: kind for kind, spec in futures.KLINE_KINDS.items()}
+    for kind_dir, kind in dir_to_kind.items():
+        kd = os.path.join(d, kind_dir)
+        if not os.path.isdir(kd):
+            continue
+        for interval in sorted(os.listdir(kd)):
+            idir = os.path.join(kd, interval)
+            if not os.path.isdir(idir):
+                continue
+            months = []
+            for fn in os.listdir(idir):
+                if fn.endswith(".csv"):
+                    try:
+                        months.append(datetime.strptime(fn[:-4], "%Y-%m"))
+                    except ValueError:
+                        pass
+            if not months:
+                continue
+            last = max(months)
+            try:
+                os.remove(os.path.join(idir, last.strftime("%Y-%m") + ".csv"))
+            except OSError:
+                pass
+            params = {"market": market, "symbols": [symbol], "kinds": [kind],
+                      "interval": interval,
+                      "start_date": last.strftime("%Y-%m-01"), "end_date": today}
+            title = f"Update {symbol} {kind} {interval} →{today}"
+            jobs.append({"id": database.create_job("binance_futures", title, params),
+                         "title": title})
+
+    # --- funding history: full refresh ---
+    if os.path.isfile(os.path.join(d, "funding.csv")):
+        try:
+            os.remove(os.path.join(d, "funding.csv"))
+        except OSError:
+            pass
+        params = {"market": market, "symbols": [symbol],
+                  "start_date": None, "end_date": today}
+        title = f"Update {symbol} funding →{today}"
+        jobs.append({"id": database.create_job("binance_funding", title, params),
+                     "title": title})
+
+    # --- sentiment metrics: re-pull the rolling window, grouped by period ---
+    mdir = os.path.join(d, "metrics")
+    if os.path.isdir(mdir):
+        by_period: dict[str, list[str]] = {}
+        for fn in sorted(os.listdir(mdir)):
+            if not fn.endswith(".csv"):
+                continue
+            # Filenames are "<metric>_<period>.csv"; metric names contain
+            # underscores (open_interest), so split on the last one.
+            metric, _, period = fn[:-len(".csv")].rpartition("_")
+            if metric not in futures.METRICS or period not in futures.METRIC_PERIODS:
+                continue
+            try:
+                os.remove(os.path.join(mdir, fn))
+            except OSError:
+                pass
+            by_period.setdefault(period, []).append(metric)
+        for period, metrics in by_period.items():
+            params = {"market": market, "symbols": [symbol],
+                      "metrics": metrics, "period": period}
+            title = f"Update {symbol} metrics ({'/'.join(metrics)} {period})"
+            jobs.append({"id": database.create_job("binance_metrics", title, params),
+                         "title": title})
+
+    if not jobs:
+        raise UpdateError("no futures data to refresh for this symbol")
     return {"jobs": jobs}
 
 
