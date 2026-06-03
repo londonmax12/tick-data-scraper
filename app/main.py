@@ -14,6 +14,7 @@ from starlette.background import BackgroundTask
 
 from . import config, db, manager, updates
 from .jobs import JOB_TYPES
+from . import cftc  # after .jobs: the leaf source modules load via jobs (avoids a cycle)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -28,6 +29,7 @@ LIBRARY_SOURCES = [
     ("sec_data", "SEC EDGAR by ticker (sec_data/)", config.SEC_DIR),
     ("sec_13f", "SEC 13F holdings (sec_13f/)", config.SEC_13F_DIR),
     ("fred_data", "FRED macro series (fred_data/)", config.FRED_DIR),
+    ("cftc_data", "CFTC Commitments of Traders (cftc_data/)", config.CFTC_DIR),
 ]
 LIBRARY_ROOTS = {key: root for key, _, root in LIBRARY_SOURCES}
 
@@ -106,6 +108,22 @@ class FredJob(BaseModel):
     realtime_start: str | None = None
     realtime_end: str | None = None
     vintage_dates: list[str] = Field(default_factory=list)
+
+
+class CftcJob(BaseModel):
+    # Which Commitments-of-Traders report families to pull; one job per family.
+    reports: list[str] = Field(default_factory=lambda: ["legacy_fut"],
+                               examples=[["legacy_fut", "disagg_fut", "tff_fut"]])
+    # At least one of contract_codes / commodity_group / commodity_subgroup /
+    # market_filter / all_markets must select markets.
+    contract_codes: list[str] = Field(default_factory=list, examples=[["13874A", "001602"]])
+    commodity_group: str | None = None     # e.g. "FINANCIAL INSTRUMENTS"
+    commodity_subgroup: str | None = None   # e.g. "CURRENCY"
+    market_filter: str | None = None        # substring of the market/exchange name
+    all_markets: bool = False               # pull every market in the report
+    max_markets: int = 1000                 # cap on a discovery fan-out
+    start_date: str | None = None  # report-date filter, YYYY-MM-DD
+    end_date: str | None = None
 
 
 # ---- helpers ------------------------------------------------------------
@@ -216,6 +234,38 @@ def create_fred(body: FredJob):
     suffix = body.units + (f"/{body.frequency}" if body.frequency else "")
     jid = _db().create_job("fred", f"FRED {what} ({suffix})", body.model_dump())
     return {"id": jid}
+
+
+@app.post("/api/jobs/cftc")
+def create_cftc(body: CftcJob):
+    """Queue one Commitments-of-Traders job per selected report family."""
+    reports = [r.strip().lower() for r in body.reports if r.strip()]
+    bad = [r for r in reports if r not in cftc.REPORTS]
+    if bad:
+        raise HTTPException(400, f"unknown CFTC report(s): {', '.join(bad)}")
+    if not reports:
+        raise HTTPException(400, "select at least one CFTC report")
+    if not (body.contract_codes or body.commodity_group or body.commodity_subgroup
+            or body.market_filter or body.all_markets):
+        raise HTTPException(400, "select markets: contract codes, a commodity "
+                                 "group/subgroup, a market filter, or all markets")
+    # Describe the markets by whatever drives the selection.
+    if body.contract_codes:
+        what = f"{len(body.contract_codes)} markets"
+    elif body.all_markets:
+        what = "all markets"
+    elif body.market_filter:
+        what = f"filter '{body.market_filter}'"
+    else:
+        what = (body.commodity_subgroup or body.commodity_group or "markets")
+
+    created = []
+    for report in reports:
+        params = {**body.model_dump(), "report": report}
+        title = f"CFTC {cftc.REPORTS[report][1]} — {what}"
+        created.append({"type": "cftc", "report": report,
+                        "id": _db().create_job("cftc", title, params)})
+    return {"jobs": created}
 
 
 @app.post("/api/jobs/{job_id}/pause")
@@ -369,7 +419,8 @@ def library_preview(rel: str, limit: int = 200):
 
 # Preferred y-columns for the quick chart, best first (price-like across all
 # our CSV shapes: yfinance prices, crypto klines, decoded ticks).
-_CHART_COLUMNS = ["close", "Close", "bid", "ask", "Open", "open", "value"]
+_CHART_COLUMNS = ["close", "Close", "bid", "ask", "Open", "open", "value",
+                  "open_interest_all"]
 _CHART_SCAN_CAP = 500_000  # rows read before we stop (then downsample)
 
 

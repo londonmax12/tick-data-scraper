@@ -146,6 +146,7 @@
         <div class="tab" data-tab="sec">SEC</div>
         <div class="tab" data-tab="sec13f">13F</div>
         <div class="tab" data-tab="fred">FRED</div>
+        <div class="tab" data-tab="cftc">CFTC</div>
         <div class="tab" data-tab="decode">Decode</div>
       </div>
 
@@ -297,6 +298,40 @@
         </details>
         <button class="btn-primary" onclick="submitFred()">Queue FRED pull</button>
         <div class="hint">Federal Reserve (St. Louis) macro series into <code>fred_data/</code>, one CSV per series. Needs a free key in the <code>FRED_API_KEY</code> env var. A search / release / category id fans out into its member series. A vintage window pulls point-in-time data (as first published) for bias-free backtests.</div>
+      </div>
+
+      <!-- CFTC Commitments of Traders -->
+      <div class="pane" id="pane-cftc">
+        <label>Report families</label>
+        <select id="c-reports" multiple size="7" style="height:auto">
+          <option value="legacy_fut" selected>Legacy — futures only</option>
+          <option value="legacy_combined">Legacy — futures + options</option>
+          <option value="disagg_fut">Disaggregated — futures only</option>
+          <option value="disagg_combined">Disaggregated — futures + options</option>
+          <option value="tff_fut">Traders in Financial Futures — futures only</option>
+          <option value="tff_combined">Traders in Financial Futures — fut + opt</option>
+          <option value="supplemental">Supplemental commodity index</option>
+        </select>
+        <label>Contract market codes (comma/space separated)</label>
+        <input id="c-codes" placeholder="e.g. 13874A, 001602, 098662" />
+        <details style="margin-top:10px">
+          <summary class="hint" style="cursor:pointer">Discover markets instead (advanced)</summary>
+          <label>Commodity group</label>
+          <input id="c-group" placeholder="e.g. FINANCIAL INSTRUMENTS" />
+          <label>Commodity subgroup</label>
+          <input id="c-subgroup" placeholder="e.g. CURRENCY" />
+          <label>Market name filter</label>
+          <input id="c-filter" placeholder="e.g. crude oil" />
+          <div class="chk"><input id="c-all" type="checkbox" /><label style="margin:0">Every market in the report</label></div>
+          <label>Max markets from a discovery</label>
+          <input id="c-max" type="number" min="1" value="500" />
+        </details>
+        <div class="row">
+          <div><label>From date (optional)</label><input id="c-start" type="date" /></div>
+          <div><label>To date (optional)</label><input id="c-end" type="date" /></div>
+        </div>
+        <button class="btn-primary" onclick="submitCftc()">Queue CFTC pull</button>
+        <div class="hint">Weekly Commitments of Traders positioning into <code>cftc_data/</code>, one CSV per market per report family. Give explicit contract market codes, or expand a commodity group/subgroup/name-filter into its markets. Each selected report family is queued as its own job. Keyless; set <code>CFTC_APP_TOKEN</code> to lift the rate limit.</div>
       </div>
 
       <!-- Decode -->
@@ -464,6 +499,31 @@ async function submitFred() {
     observation_end: $('fr-end').value || null,
     realtime_start: $('fr-rtstart').value || null,
     realtime_end: $('fr-rtend').value || null,
+  });
+  refresh();
+}
+async function submitCftc() {
+  const reports = [...$('c-reports').selectedOptions].map(o => o.value);
+  const contract_codes = $('c-codes').value.split(/[\s,]+/).filter(Boolean).map(s => s.toUpperCase());
+  const commodity_group = $('c-group').value.trim();
+  const commodity_subgroup = $('c-subgroup').value.trim();
+  const market_filter = $('c-filter').value.trim();
+  const all_markets = $('c-all').checked;
+  if (!reports.length) { alert('Select at least one report family.'); return; }
+  if (!contract_codes.length && !commodity_group && !commodity_subgroup
+      && !market_filter && !all_markets) {
+    alert('Select markets: contract codes, a commodity group/subgroup, a name filter, or all markets.'); return;
+  }
+  await api('POST', '/api/jobs/cftc', {
+    reports,
+    contract_codes,
+    commodity_group: commodity_group || null,
+    commodity_subgroup: commodity_subgroup || null,
+    market_filter: market_filter || null,
+    all_markets,
+    max_markets: +($('c-max').value || 500),
+    start_date: $('c-start').value || null,
+    end_date: $('c-end').value || null,
   });
   refresh();
 }

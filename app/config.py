@@ -54,6 +54,7 @@ CRYPTO_DIR = os.path.join(BASE_DIR, "crypto_data")       # Binance OHLCV klines
 SEC_DIR = os.path.join(BASE_DIR, "sec_data")             # SEC EDGAR by ticker (facts/filings/insider)
 SEC_13F_DIR = os.path.join(BASE_DIR, "sec_13f")          # SEC 13F institutional holdings by CIK
 FRED_DIR = os.path.join(BASE_DIR, "fred_data")           # FRED macro series by series id
+CFTC_DIR = os.path.join(BASE_DIR, "cftc_data")           # CFTC Commitments of Traders by contract market code
 
 # How many download tasks run at once across the whole manager.
 MAX_CONCURRENCY = _env_int("DM_CONCURRENCY", 12)
@@ -90,6 +91,19 @@ FRED_API_KEY = _env_str("FRED_API_KEY", "")
 FRED_RATE_LIMIT = _env_float("FRED_RATE_LIMIT", 2)  # requests/second
 FRED_HEADERS = {
     "User-Agent": _env_str("FRED_UA", "quant_data/1.0 (londonhmball@gmail.com)"),
+    "Accept-Encoding": "gzip, deflate",
+    "Accept": "application/json",
+}
+
+# CFTC Commitments of Traders access (Socrata, https://publicreporting.cftc.gov).
+# Keyless, but the host throttles anonymous traffic — an optional Socrata app
+# token (free; https://publicreporting.cftc.gov/profile/app_tokens) is sent as
+# an X-App-Token header to lift the ceiling. All CFTC traffic funnels through a
+# shared limiter (see app/cftc.py) kept polite at a few requests/second.
+CFTC_APP_TOKEN = _env_str("CFTC_APP_TOKEN", "")
+CFTC_RATE_LIMIT = _env_float("CFTC_RATE_LIMIT", 5)  # requests/second
+CFTC_HEADERS = {
+    "User-Agent": _env_str("CFTC_UA", "quant_data/1.0 (londonhmball@gmail.com)"),
     "Accept-Encoding": "gzip, deflate",
     "Accept": "application/json",
 }

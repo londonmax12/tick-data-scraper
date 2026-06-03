@@ -19,6 +19,7 @@ _ROOTS = {
     "sec_data": config.SEC_DIR,
     "sec_13f": config.SEC_13F_DIR,
     "fred_data": config.FRED_DIR,
+    "cftc_data": config.CFTC_DIR,
 }
 
 
@@ -68,6 +69,8 @@ def enqueue_update(database, rel: str) -> dict:
         return _update_sec_13f(database, name)
     if source == "fred_data":
         return _update_fred(database, name, d)
+    if source == "cftc_data":
+        return _update_cftc(database, name, d)
     raise UpdateError("unsupported dataset")
 
 
@@ -227,6 +230,36 @@ def _update_fred(database, series_id: str, d: str) -> dict:
                      "title": title})
     if not jobs:
         raise UpdateError("no FRED series files to refresh")
+    return {"jobs": jobs}
+
+
+def _update_cftc(database, code: str, d: str) -> dict:
+    """Re-pull every report family already on disk for a contract market code.
+
+    A market's weekly history is small and the CFTC revises figures in place, so
+    the cleanest refresh is a full re-download: each file encodes its report
+    family in the name (``<code>_<report>.csv``), so we delete it and re-queue
+    that exact request. The ``_meta.csv`` sidecar is left for the run to rewrite.
+    """
+    from . import cftc  # local: leaf source module loads via jobs (avoids a cycle)
+    prefix = f"{code}_"
+    jobs = []
+    for fn in os.listdir(d):
+        if not fn.endswith(".csv") or not fn.startswith(prefix):
+            continue
+        report = fn[len(prefix):-len(".csv")]      # "<report>"
+        if report == "meta" or report not in cftc.REPORTS:
+            continue
+        try:
+            os.remove(os.path.join(d, fn))
+        except OSError:
+            pass
+        params = {"report": report, "contract_codes": [code]}
+        title = f"Update CFTC {code} ({cftc.REPORTS[report][1]})"
+        jobs.append({"id": database.create_job("cftc", title, params),
+                     "title": title})
+    if not jobs:
+        raise UpdateError("no CFTC report files to refresh")
     return {"jobs": jobs}
 
 

@@ -10,7 +10,7 @@ after the app is restarted.
 
 ## What it does
 
-Nine job types, all queued from the same UI:
+Ten job types, all queued from the same UI:
 
 | Job type    | Source                        | Output                    | Resumable unit   |
 |-------------|-------------------------------|---------------------------|------------------|
@@ -23,6 +23,7 @@ Nine job types, all queued from the same UI:
 | **SEC insider** | SEC EDGAR Form 3/4/5      | `sec_data/<ticker>/insider/` | one filing    |
 | **SEC 13F**   | SEC EDGAR 13F-HR            | `sec_13f/<cik>/`          | one filing       |
 | **FRED**      | FRED (St. Louis Fed) API   | `fred_data/<series>/`     | one series       |
+| **CFTC**      | CFTC Commitments of Traders | `cftc_data/<code>/`       | one market       |
 
 * **yfinance** saves the actual **OHLCV price history** (`<ticker>_prices_<interval>.csv`)
   plus company info, dividends and splits. Pick a bar interval (1d … 1m) and an
@@ -82,6 +83,36 @@ FRED **requires a free API key** — get one at
 `FRED_API_KEY` environment variable. All FRED traffic funnels through a shared
 limiter kept under FRED's 120 req/min ceiling.
 
+### CFTC (Commitments of Traders)
+
+Weekly futures-market **positioning** from the U.S. Commodity Futures Trading
+Commission — queued from the **CFTC** tab into `cftc_data/<code>/`, one CSV per
+market per report family. More than a plain CSV grab:
+
+* **Seven report families** — the same markets are published under three trader
+  classification schemes, each futures-only and futures+options ("combined"),
+  plus the supplemental commodity-index report:
+  **Legacy** (commercial / non-commercial), **Disaggregated** (producer-merchant
+  / swap / managed-money / other), and **Traders in Financial Futures** (dealer /
+  asset-manager / leveraged). Select any subset; each is queued as its own job
+  and stored as `<code>_<report>.csv` so families never clobber each other.
+* **Discovery** — instead of listing contract market codes by hand, expand a
+  **commodity group** (`FINANCIAL INSTRUMENTS`), a **subgroup** (`CURRENCY`), or a
+  free-text **market-name filter** (`crude oil`) into its markets — or pull the
+  **whole report**. The planner dedups against any explicit codes and queues one
+  task per market (capped by *Max markets*).
+* **Server-side SoQL** — each market's full weekly history is filtered, ordered
+  and paged on the CFTC's Socrata API and bounded to an optional report-date
+  window. Columns are written from the union of fields the family returns (the
+  trader buckets differ per family), identity/date columns first.
+* **Metadata** — every market also gets a one-row `<code>_meta.csv` (market name,
+  commodity, group/subgroup, contract units, CFTC codes, and the span/observation
+  count on disk).
+
+The CFTC API is **key-less**; its Socrata host throttles anonymous traffic, so an
+optional free app token (set `CFTC_APP_TOKEN`) lifts the ceiling. All CFTC traffic
+funnels through a shared limiter.
+
 ### Library
 
 A **Library** tab browses what's already on disk: every dataset grouped by
@@ -104,7 +135,7 @@ authoritative after one pass.
 Every dataset in the Library has an **Update** button that inspects what's on
 disk and queues a job to carry it forward to today — from the last downloaded
 day (Dukascopy), the last month (Binance, re-fetching the partial latest month),
-or a full refresh (yfinance). **⏱ Auto** schedules that update on an `hourly` /
+or a full refresh (yfinance, FRED, CFTC). **⏱ Auto** schedules that update on an `hourly` /
 `daily` / `weekly` cadence; the manager's poll loop fires due schedules in the
 background and survives restarts (schedule state lives in `manager.db`).
 
@@ -150,6 +181,8 @@ already `done`/`skipped`, so nothing is re-downloaded needlessly.
 | `SEC_RATE_LIMIT`  | `8`     | Max SEC requests/second (ceiling is 10)  |
 | `FRED_API_KEY`    | _(none)_ | Free FRED API key (required for FRED jobs) |
 | `FRED_RATE_LIMIT` | `2`     | Max FRED requests/second (ceiling is 120/min) |
+| `CFTC_APP_TOKEN`  | _(none)_ | Optional Socrata app token (lifts CFTC rate limit) |
+| `CFTC_RATE_LIMIT` | `5`     | Max CFTC requests/second                 |
 
 ## Layout
 
@@ -160,6 +193,7 @@ app/
   jobs.py      FX/equity/crypto job types: plan() + run() per task
   sec.py       SEC EDGAR job types (facts/filings/insider/13F) + rate limiter
   fred.py      FRED job type (macro series) + discovery, transforms, rate limiter
+  cftc.py      CFTC Commitments of Traders job type + report families, discovery, SoQL
   manager.py   asyncio scheduler: worker pool, retry/backoff, pause/resume
   main.py      FastAPI REST API + serves the UI
   static/index.html   single-page web UI (live polling)
