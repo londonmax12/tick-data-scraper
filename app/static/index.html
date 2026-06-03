@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quant Data — Download Manager</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #181b22; --panel2: #20242e; --border: #2a2f3a;
+    --text: #e6e9ef; --muted: #8b93a3; --accent: #4f8cff; --accent2: #2b6fe0;
+    --green: #38c172; --amber: #f6ad3c; --red: #e74c5e; --grey: #5a6273;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--border);
+           display: flex; align-items: baseline; gap: 14px; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .wrap { display: grid; grid-template-columns: 360px 1fr; gap: 0; min-height: calc(100vh - 59px); }
+  .side { border-right: 1px solid var(--border); padding: 18px; overflow-y: auto; }
+  .main { padding: 18px 24px; overflow-y: auto; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+       color: var(--muted); margin: 0 0 10px; }
+  .card { background: var(--panel); border: 1px solid var(--border);
+          border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+  input, select { width: 100%; background: var(--panel2); border: 1px solid var(--border);
+          color: var(--text); border-radius: 7px; padding: 8px 10px; font-size: 13px; }
+  .row { display: flex; gap: 8px; }
+  .row > div { flex: 1; }
+  .chk { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .chk input { width: auto; }
+  button { cursor: pointer; border: none; border-radius: 7px; font-size: 13px;
+           padding: 8px 12px; font-weight: 600; }
+  .btn-primary { background: var(--accent); color: #fff; width: 100%; margin-top: 12px; }
+  .btn-primary:hover { background: var(--accent2); }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tab { flex: 1; text-align: center; padding: 8px; border-radius: 7px;
+         background: var(--panel2); color: var(--muted); font-size: 12px; font-weight: 600; }
+  .tab.active { background: var(--accent); color: #fff; }
+  .pane { display: none; } .pane.active { display: block; }
+  .jobs { display: flex; flex-direction: column; gap: 12px; }
+  .job { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .job-top { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+  .job-title { font-weight: 600; font-size: 14px; }
+  .job-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .badge { font-size: 11px; padding: 3px 8px; border-radius: 20px; font-weight: 700;
+           text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+  .b-queued { background: #2c3346; color: #9fb0d0; }
+  .b-running { background: rgba(79,140,255,.18); color: #79a8ff; }
+  .b-paused { background: rgba(246,173,60,.18); color: var(--amber); }
+  .b-completed { background: rgba(56,193,114,.18); color: var(--green); }
+  .b-failed { background: rgba(231,76,94,.18); color: var(--red); }
+  .b-cancelled { background: #33384a; color: var(--grey); }
+  .bar { height: 8px; background: var(--panel2); border-radius: 6px; overflow: hidden; margin: 12px 0 6px; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .4s ease; }
+  .bar.done > div { background: var(--green); }
+  .bar.failed > div { background: var(--red); }
+  .bar.paused > div { background: var(--amber); }
+  .stats { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  .stats b { color: var(--text); }
+  .err { color: var(--red); font-size: 12px; margin-top: 8px; }
+  .actions { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+  .actions button { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+                    padding: 6px 10px; font-size: 12px; }
+  .actions button:hover { border-color: var(--accent); color: #fff; }
+  .actions .danger:hover { border-color: var(--red); color: var(--red); }
+  .empty { color: var(--muted); text-align: center; padding: 40px; font-size: 14px; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Quant Data — Download Manager</h1>
+  <span class="sub" id="cfg"></span>
+</header>
+<div class="wrap">
+  <aside class="side">
+    <h2>New download</h2>
+    <div class="card">
+      <div class="tabs">
+        <div class="tab active" data-tab="dukascopy">Dukascopy</div>
+        <div class="tab" data-tab="yfinance">yfinance</div>
+        <div class="tab" data-tab="decode">Decode</div>
+      </div>
+
+      <!-- Dukascopy -->
+      <div class="pane active" id="pane-dukascopy">
+        <label>Ticker (forex pair)</label>
+        <input id="d-ticker" value="GBPJPY" />
+        <div class="row">
+          <div><label>Start date</label><input id="d-start" type="date" value="2023-01-02" /></div>
+          <div><label>End date</label><input id="d-end" type="date" value="2023-01-06" /></div>
+        </div>
+        <div class="row">
+          <div><label>Hour from</label><input id="d-hmin" type="number" min="0" max="23" value="0" /></div>
+          <div><label>Hour to</label><input id="d-hmax" type="number" min="0" max="23" value="23" /></div>
+        </div>
+        <div class="chk"><input id="d-decode" type="checkbox" /><label style="margin:0">Decode to CSV when finished</label></div>
+        <button class="btn-primary" onclick="submitDukascopy()">Queue download</button>
+        <div class="hint">One task per hour file. Market-closed hours are skipped; dropped connections retry automatically.</div>
+      </div>
+
+      <!-- yfinance -->
+      <div class="pane" id="pane-yfinance">
+        <label>Tickers (comma or space separated)</label>
+        <input id="y-tickers" value="AAPL, MSFT, GOOGL" />
+        <button class="btn-primary" onclick="submitYf()">Queue fetch</button>
+        <div class="hint">Fetches company info, dividends and splits into <code>company_data/</code>. One task per ticker.</div>
+      </div>
+
+      <!-- Decode -->
+      <div class="pane" id="pane-decode">
+        <label>Ticker</label>
+        <input id="dec-ticker" value="GBPJPY" />
+        <button class="btn-primary" onclick="submitDecode()">Queue decode</button>
+        <div class="hint">Decodes already-downloaded <code>results/&lt;ticker&gt;</code> .bi5 files into <code>results_csv/</code>. One task per day.</div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <h2>Queue</h2>
+    <div class="jobs" id="jobs"><div class="empty">No jobs yet. Queue one on the left.</div></div>
+  </main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// tab switching
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  $('pane-' + t.dataset.tab).classList.add('active');
+});
+
+async function api(method, url, body) {
+  const opt = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch(url, opt);
+  if (!r.ok) { alert('Error: ' + (await r.text())); throw new Error(r.statusText); }
+  return r.json();
+}
+
+async function submitDukascopy() {
+  await api('POST', '/api/jobs/dukascopy', {
+    ticker: $('d-ticker').value.trim().toUpperCase(),
+    start_date: $('d-start').value,
+    end_date: $('d-end').value,
+    hour_min: +$('d-hmin').value,
+    hour_max: +$('d-hmax').value,
+    decode_after: $('d-decode').checked,
+  });
+  refresh();
+}
+async function submitYf() {
+  const tickers = $('y-tickers').value.split(/[\s,]+/).filter(Boolean);
+  await api('POST', '/api/jobs/yfinance', { tickers });
+  refresh();
+}
+async function submitDecode() {
+  await api('POST', '/api/jobs/decode', { ticker: $('dec-ticker').value.trim().toUpperCase() });
+  refresh();
+}
+
+const act = (id, what) => api('POST', `/api/jobs/${id}/${what}`).then(refresh);
+const del = (id) => { if (confirm('Delete this job and its progress?')) api('DELETE', `/api/jobs/${id}`).then(refresh); };
+
+function controls(j) {
+  const b = [];
+  if (j.status === 'running' || j.status === 'queued')
+    b.push(`<button onclick="act('${j.id}','pause')">Pause</button>`);
+  if (j.status === 'paused')
+    b.push(`<button onclick="act('${j.id}','resume')">Resume</button>`);
+  if (j.status === 'failed')
+    b.push(`<button onclick="act('${j.id}','retry')">Retry failed</button>`);
+  if (j.status === 'cancelled' || j.status === 'completed')
+    b.push(`<button onclick="act('${j.id}','retry')">Re-run</button>`);
+  if (j.status === 'running' || j.status === 'queued' || j.status === 'paused')
+    b.push(`<button onclick="act('${j.id}','cancel')">Cancel</button>`);
+  b.push(`<button class="danger" onclick="del('${j.id}')">Delete</button>`);
+  return b.join('');
+}
+
+function barClass(s) {
+  return s === 'completed' ? 'done' : s === 'failed' ? 'failed' : s === 'paused' ? 'paused' : '';
+}
+
+function render(jobs) {
+  const el = $('jobs');
+  if (!jobs.length) { el.innerHTML = '<div class="empty">No jobs yet. Queue one on the left.</div>'; return; }
+  el.innerHTML = jobs.map(j => `
+    <div class="job">
+      <div class="job-top">
+        <div>
+          <div class="job-title">${escapeHtml(j.title)}</div>
+          <div class="job-meta">${j.type} · created ${new Date(j.created_at*1000).toLocaleString()}</div>
+        </div>
+        <span class="badge b-${j.status}">${j.status}</span>
+      </div>
+      <div class="bar ${barClass(j.status)}"><div style="width:${j.percent}%"></div></div>
+      <div class="stats">
+        <span>${j.percent}%</span>
+        <span><b>${j.done||0}</b>/${j.total||0} done</span>
+        ${j.failed ? `<span style="color:var(--red)"><b>${j.failed}</b> failed</span>` : ''}
+      </div>
+      ${j.error ? `<div class="err">${escapeHtml(j.error)}</div>` : ''}
+      <div class="actions">${controls(j)}</div>
+    </div>`).join('');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function refresh() {
+  try { render(await api('GET', '/api/jobs')); } catch (e) {}
+}
+
+(async () => {
+  try {
+    const c = await api('GET', '/api/config');
+    $('cfg').textContent = `${c.concurrency} concurrent · auto-retry up to ${c.max_attempts}×`;
+  } catch (e) {}
+  refresh();
+  setInterval(refresh, 1000);  // live polling
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Download manager web app
+fastapi>=0.110
+uvicorn[standard]>=0.29
+requests>=2.31
+yfinance>=0.2.40
+pandas>=2.0

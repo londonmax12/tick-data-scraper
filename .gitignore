@@ -1,3 +1,12 @@
+# Download manager runtime state + outputs
+manager.db
+manager.db-wal
+manager.db-shm
+server.log
+results/
+results_csv/
+company_data/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
