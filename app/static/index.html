@@ -68,6 +68,66 @@
   .actions .danger:hover { border-color: var(--red); color: var(--red); }
   .empty { color: var(--muted); text-align: center; padding: 40px; font-size: 14px; }
   .hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+
+  /* main-panel view switch (Queue / Library) */
+  .mainnav { display: flex; gap: 6px; margin-bottom: 16px; }
+  .navbtn { background: var(--panel2); color: var(--muted); border: 1px solid var(--border); }
+  .navbtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* library */
+  .lib-src { margin-bottom: 22px; }
+  .lib-src h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+                color: var(--muted); margin: 0 0 8px; }
+  table.lib { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.lib th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px;
+                 text-transform: uppercase; letter-spacing: .04em; padding: 6px 10px;
+                 border-bottom: 1px solid var(--border); }
+  table.lib td { padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  table.lib tr:hover td { background: var(--panel2); }
+  table.lib .num { color: var(--muted); white-space: nowrap; }
+  table.lib button { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+                     padding: 4px 9px; font-size: 12px; }
+  table.lib button:hover { border-color: var(--accent); color: #fff; }
+
+  /* preview overlay */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55);
+             display: none; align-items: center; justify-content: center; z-index: 50; }
+  .overlay.show { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+           width: min(900px, 92vw); max-height: 88vh; display: flex; flex-direction: column; }
+  .modal-head { display: flex; justify-content: space-between; align-items: center;
+                padding: 14px 18px; border-bottom: 1px solid var(--border); gap: 12px; }
+  .modal-head .title { font-weight: 600; font-size: 14px; word-break: break-all; }
+  .modal-head .x { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+                   border-radius: 7px; padding: 4px 10px; }
+  .modal-body { padding: 16px 18px; overflow: auto; }
+  canvas.chart { width: 100%; height: 180px; background: var(--panel2);
+                 border: 1px solid var(--border); border-radius: 8px; display: block; }
+  .chart-meta { font-size: 11px; color: var(--muted); margin: 6px 0 14px; }
+  table.peek { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.peek th, table.peek td { padding: 4px 8px; border-bottom: 1px solid var(--border);
+                                 white-space: nowrap; text-align: left; }
+  table.peek th { color: var(--muted); position: sticky; top: 0; background: var(--panel); }
+
+  /* coverage heat-grid */
+  .cov-summary { font-size: 13px; margin-bottom: 6px; }
+  .cov-summary b { color: var(--text); }
+  .cov-controls { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; margin-bottom: 14px; }
+  .cov-controls > div { flex: 0 0 auto; }
+  .cov-controls input { width: 130px; }
+  .cov-controls input[type=number] { width: 64px; }
+  .cov-controls button { width: auto; margin: 0; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin: 4px 0 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+  .dot.p { background: var(--green); } .dot.c { background: var(--grey); } .dot.h { background: var(--red); }
+  table.grid { border-collapse: collapse; }
+  table.grid th { font-size: 9px; color: var(--muted); font-weight: 500; padding: 1px 2px; }
+  table.grid td.d { font-size: 11px; color: var(--muted); padding-right: 8px; white-space: nowrap; }
+  table.grid td.cell { width: 13px; height: 13px; padding: 0; border: 1px solid var(--bg); }
+  table.grid td.cell.p { background: var(--green); }
+  table.grid td.cell.c { background: var(--grey); }
+  table.grid td.cell.h { background: var(--red); }
 </style>
 </head>
 <body>
@@ -82,6 +142,7 @@
       <div class="tabs">
         <div class="tab active" data-tab="dukascopy">Dukascopy</div>
         <div class="tab" data-tab="yfinance">yfinance</div>
+        <div class="tab" data-tab="binance">Binance</div>
         <div class="tab" data-tab="decode">Decode</div>
       </div>
 
@@ -106,8 +167,45 @@
       <div class="pane" id="pane-yfinance">
         <label>Tickers (comma or space separated)</label>
         <input id="y-tickers" value="AAPL, MSFT, GOOGL" />
+        <label>Interval</label>
+        <select id="y-interval">
+          <option value="1d" selected>1d (daily)</option>
+          <option value="1wk">1wk</option>
+          <option value="1mo">1mo</option>
+          <option value="1h">1h</option>
+          <option value="30m">30m</option>
+          <option value="15m">15m</option>
+          <option value="5m">5m</option>
+          <option value="1m">1m</option>
+        </select>
+        <div class="row">
+          <div><label>Start date (optional)</label><input id="y-start" type="date" /></div>
+          <div><label>End date (optional)</label><input id="y-end" type="date" /></div>
+        </div>
         <button class="btn-primary" onclick="submitYf()">Queue fetch</button>
-        <div class="hint">Fetches company info, dividends and splits into <code>company_data/</code>. One task per ticker.</div>
+        <div class="hint">Saves OHLCV price history + info/dividends/splits into <code>company_data/</code>. Leave dates blank for full history. Intraday intervals (≤1h) only cover recent history.</div>
+      </div>
+
+      <!-- Binance -->
+      <div class="pane" id="pane-binance">
+        <label>Symbols (comma or space separated)</label>
+        <input id="b-symbols" value="BTCUSDT, ETHUSDT" />
+        <label>Interval</label>
+        <select id="b-interval">
+          <option value="1d" selected>1d</option>
+          <option value="4h">4h</option>
+          <option value="1h">1h</option>
+          <option value="15m">15m</option>
+          <option value="5m">5m</option>
+          <option value="1m">1m</option>
+          <option value="1w">1w</option>
+        </select>
+        <div class="row">
+          <div><label>Start date</label><input id="b-start" type="date" value="2023-01-01" /></div>
+          <div><label>End date</label><input id="b-end" type="date" value="2023-12-31" /></div>
+        </div>
+        <button class="btn-primary" onclick="submitBinance()">Queue download</button>
+        <div class="hint">Crypto OHLCV from Binance's public API into <code>crypto_data/</code>. One task per symbol-month; rate limits retry automatically.</div>
       </div>
 
       <!-- Decode -->
@@ -121,9 +219,64 @@
   </aside>
 
   <main class="main">
-    <h2>Queue</h2>
-    <div class="jobs" id="jobs"><div class="empty">No jobs yet. Queue one on the left.</div></div>
+    <div class="mainnav">
+      <button class="navbtn active" data-view="queue" onclick="switchView('queue')">Queue</button>
+      <button class="navbtn" data-view="library" onclick="switchView('library')">Library</button>
+    </div>
+
+    <div id="view-queue">
+      <div class="jobs" id="jobs"><div class="empty">No jobs yet. Queue one on the left.</div></div>
+    </div>
+
+    <div id="view-library" style="display:none">
+      <div id="library"><div class="empty">Loading…</div></div>
+    </div>
   </main>
+</div>
+
+<!-- preview overlay -->
+<div class="overlay" id="overlay" onclick="if(event.target===this)closePreview()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="title" id="pv-title"></div>
+      <div style="display:flex;gap:8px">
+        <button class="x" id="pv-dl">Download</button>
+        <button class="x" onclick="closePreview()">Close</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <canvas class="chart" id="pv-chart" width="860" height="180"></canvas>
+      <div class="chart-meta" id="pv-meta"></div>
+      <div id="pv-table"></div>
+    </div>
+  </div>
+</div>
+
+<!-- coverage overlay -->
+<div class="overlay" id="cov-overlay" onclick="if(event.target===this)closeCoverage()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="title" id="cov-title"></div>
+      <button class="x" onclick="closeCoverage()">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="cov-controls">
+        <div><label>Start</label><input id="cov-start" type="date" /></div>
+        <div><label>End</label><input id="cov-end" type="date" /></div>
+        <div><label>Hour from</label><input id="cov-hmin" type="number" min="0" max="23" value="0" /></div>
+        <div><label>Hour to</label><input id="cov-hmax" type="number" min="0" max="23" value="23" /></div>
+        <div><label>&nbsp;</label><button class="x" onclick="loadCoverage()">Recompute</button></div>
+      </div>
+      <div class="cov-summary" id="cov-summary"></div>
+      <div class="legend">
+        <span><i class="dot p"></i> have</span>
+        <span><i class="dot c"></i> closed / skipped</span>
+        <span><i class="dot h"></i> missing</span>
+      </div>
+      <div id="cov-grid"></div>
+      <button class="btn-primary" id="cov-fill" style="margin-top:14px" onclick="fillGaps()"></button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -158,7 +311,22 @@ async function submitDukascopy() {
 }
 async function submitYf() {
   const tickers = $('y-tickers').value.split(/[\s,]+/).filter(Boolean);
-  await api('POST', '/api/jobs/yfinance', { tickers });
+  await api('POST', '/api/jobs/yfinance', {
+    tickers,
+    interval: $('y-interval').value,
+    start_date: $('y-start').value || null,
+    end_date: $('y-end').value || null,
+  });
+  refresh();
+}
+async function submitBinance() {
+  const symbols = $('b-symbols').value.split(/[\s,]+/).filter(Boolean).map(s => s.toUpperCase());
+  await api('POST', '/api/jobs/binance', {
+    symbols,
+    interval: $('b-interval').value,
+    start_date: $('b-start').value,
+    end_date: $('b-end').value,
+  });
   refresh();
 }
 async function submitDecode() {
@@ -219,6 +387,257 @@ function escapeHtml(s) {
 async function refresh() {
   try { render(await api('GET', '/api/jobs')); } catch (e) {}
 }
+
+// ---- Library view -------------------------------------------------------
+
+function fmtBytes(b) {
+  if (!b) return '0 B';
+  const u = ['B','KB','MB','GB','TB']; let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return `${b.toFixed(i ? 1 : 0)} ${u[i]}`;
+}
+
+function switchView(view) {
+  document.querySelectorAll('.navbtn').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === view));
+  $('view-queue').style.display = view === 'queue' ? '' : 'none';
+  $('view-library').style.display = view === 'library' ? '' : 'none';
+  if (view === 'library') loadLibrary();
+}
+
+async function loadLibrary() {
+  const el = $('library');
+  let data, schedules = [];
+  try {
+    [data, schedules] = await Promise.all([
+      api('GET', '/api/library'),
+      api('GET', '/api/schedules').catch(() => []),
+    ]);
+  } catch (e) { el.innerHTML = '<div class="empty">Could not load library.</div>'; return; }
+
+  const total = data.sources.reduce((n, s) => n + s.datasets.length, 0);
+  if (!total && !schedules.length) {
+    el.innerHTML = '<div class="empty">Nothing downloaded yet.</div>'; return;
+  }
+
+  const schedHtml = schedules.length ? `
+    <div class="lib-src">
+      <h3>Auto-update schedules</h3>
+      <table class="lib">
+        <thead><tr><th>Dataset</th><th>Every</th><th>Next run</th><th></th></tr></thead>
+        <tbody>
+          ${schedules.map(s => `
+            <tr>
+              <td>${escapeHtml(s.rel)} ${s.enabled ? '' : '<span class="num">(paused)</span>'}</td>
+              <td class="num">${s.cadence}</td>
+              <td class="num">${s.enabled ? new Date(s.next_run * 1000).toLocaleString() : '—'}</td>
+              <td style="text-align:right;white-space:nowrap">
+                <button onclick="toggleSchedule('${s.id}')">${s.enabled ? 'Pause' : 'Resume'}</button>
+                <button onclick="deleteSchedule('${s.id}')">Delete</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : '';
+
+  const srcHtml = data.sources.filter(s => s.datasets.length).map(s => `
+    <div class="lib-src">
+      <h3>${escapeHtml(s.label)}</h3>
+      <table class="lib">
+        <thead><tr><th>Dataset</th><th>Files</th><th>Size</th><th></th></tr></thead>
+        <tbody>
+          ${s.datasets.map(d => `
+            <tr>
+              <td>${escapeHtml(d.name)}</td>
+              <td class="num">${d.files}</td>
+              <td class="num">${fmtBytes(d.bytes)}</td>
+              <td style="text-align:right;white-space:nowrap">
+                ${s.key === 'results'
+                  ? `<button onclick="openCoverage('${encodeURIComponent(d.name)}')">Coverage</button>`
+                  : `<button onclick="pickFile('${encodeURIComponent(d.rel)}')">Preview</button>`}
+                <button onclick="updateDataset('${encodeURIComponent(d.rel)}')">Update</button>
+                <button onclick="scheduleDataset('${encodeURIComponent(d.rel)}')">⏱ Auto</button>
+                <button onclick="location.href='/api/library/zip?rel=${encodeURIComponent(d.rel)}'">⬇ zip</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`).join('');
+
+  el.innerHTML = schedHtml + srcHtml;
+}
+
+async function updateDataset(relEnc) {
+  const rel = decodeURIComponent(relEnc);
+  let r;
+  try { r = await api('POST', '/api/library/update', { rel }); }
+  catch (e) { return; }
+  switchView('queue');
+  refresh();
+}
+
+async function scheduleDataset(relEnc) {
+  const rel = decodeURIComponent(relEnc);
+  const c = prompt('Auto-update how often?  hourly / daily / weekly', 'daily');
+  if (!c) return;
+  try { await api('POST', '/api/schedules', { rel, cadence: c.trim().toLowerCase() }); }
+  catch (e) { return; }
+  loadLibrary();
+}
+
+async function toggleSchedule(id) { await api('POST', `/api/schedules/${id}/toggle`); loadLibrary(); }
+async function deleteSchedule(id) {
+  if (!confirm('Delete this schedule?')) return;
+  await api('DELETE', `/api/schedules/${id}`); loadLibrary();
+}
+
+async function pickFile(relEnc) {
+  const rel = decodeURIComponent(relEnc);
+  let data;
+  try { data = await api('GET', `/api/library/files?rel=${encodeURIComponent(rel)}`); }
+  catch (e) { return; }
+  const files = data.files || [];
+  if (!files.length) { alert('No previewable CSV files in this dataset.'); return; }
+  // One CSV: open it directly. Many: ask which.
+  let target = files[0];
+  if (files.length > 1) {
+    const choice = prompt(
+      'Preview which file?\n\n' + files.map((f, i) => `${i + 1}. ${f.name}`).join('\n'),
+      '1');
+    if (choice === null) return;
+    const idx = (parseInt(choice, 10) || 1) - 1;
+    target = files[idx] || files[0];
+  }
+  openPreview(target.rel);
+}
+
+async function openPreview(rel) {
+  $('pv-title').textContent = rel;
+  $('pv-dl').onclick = () => location.href = `/api/library/download?rel=${encodeURIComponent(rel)}`;
+  $('pv-meta').textContent = 'Loading…';
+  $('pv-table').innerHTML = '';
+  $('overlay').classList.add('show');
+
+  let series = { x: [], y: [], total: 0, column: '' }, peek = { columns: [], rows: [] };
+  try {
+    [series, peek] = await Promise.all([
+      api('GET', `/api/library/series?rel=${encodeURIComponent(rel)}`),
+      api('GET', `/api/library/preview?rel=${encodeURIComponent(rel)}&limit=200`),
+    ]);
+  } catch (e) { $('pv-meta').textContent = 'Could not load preview.'; return; }
+
+  drawChart($('pv-chart'), series.y);
+  $('pv-meta').textContent = series.total
+    ? `${series.column} · ${series.total.toLocaleString()} rows (showing ${series.points} points)`
+    : 'No numeric series to chart.';
+
+  $('pv-table').innerHTML = `
+    <table class="peek">
+      <thead><tr>${peek.columns.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+      <tbody>
+        ${peek.rows.map(r => `<tr>${r.map(v => `<td>${escapeHtml(v)}</td>`).join('')}</tr>`).join('')}
+      </tbody>
+    </table>
+    ${peek.rows.length >= 200 ? '<div class="hint">Showing first 200 rows.</div>' : ''}`;
+}
+
+function drawChart(canvas, ys) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height, pad = 26;
+  ctx.clearRect(0, 0, W, H);
+  if (!ys || ys.length < 2) return;
+  let min = Infinity, max = -Infinity;
+  for (const y of ys) { if (y < min) min = y; if (y > max) max = y; }
+  const span = (max - min) || 1;
+  const px = i => pad + (W - 2 * pad) * (i / (ys.length - 1));
+  const py = y => pad + (H - 2 * pad) * (1 - (y - min) / span);
+  ctx.strokeStyle = '#4f8cff'; ctx.lineWidth = 1.5; ctx.beginPath();
+  ys.forEach((y, i) => i ? ctx.lineTo(px(i), py(y)) : ctx.moveTo(px(i), py(y)));
+  ctx.stroke();
+  ctx.fillStyle = '#8b93a3'; ctx.font = '11px system-ui';
+  ctx.fillText(max.toPrecision(6), 4, pad - 8);
+  ctx.fillText(min.toPrecision(6), 4, H - 8);
+}
+
+function closePreview() { $('overlay').classList.remove('show'); }
+
+// ---- Coverage (Dukascopy gap analysis) ----------------------------------
+
+let covTicker = null;
+
+async function openCoverage(nameEnc) {
+  covTicker = decodeURIComponent(nameEnc);
+  $('cov-title').textContent = covTicker + ' — coverage';
+  $('cov-start').value = ''; $('cov-end').value = '';
+  $('cov-hmin').value = 0; $('cov-hmax').value = 23;
+  $('cov-overlay').classList.add('show');
+  loadCoverage();
+}
+
+async function loadCoverage() {
+  $('cov-summary').textContent = 'Computing…';
+  $('cov-grid').innerHTML = '';
+  $('cov-fill').style.display = 'none';
+  const qs = new URLSearchParams();
+  if ($('cov-start').value) qs.set('start', $('cov-start').value);
+  if ($('cov-end').value) qs.set('end', $('cov-end').value);
+  qs.set('hour_min', $('cov-hmin').value || 0);
+  qs.set('hour_max', $('cov-hmax').value || 23);
+  let d;
+  try { d = await api('GET', `/api/coverage/${encodeURIComponent(covTicker)}?${qs}`); }
+  catch (e) { $('cov-summary').textContent = 'Could not compute coverage.'; return; }
+  renderCoverage(d);
+}
+
+function renderCoverage(d) {
+  if (!d.start) {
+    $('cov-summary').innerHTML = 'Nothing downloaded for this ticker yet.';
+    return;
+  }
+  // reflect the resolved range back into the inputs
+  $('cov-start').value = d.start; $('cov-end').value = d.end;
+  $('cov-summary').innerHTML =
+    `<b>${d.coverage_pct}%</b> covered · <b>${d.present}</b> have · ` +
+    `<b>${d.closed}</b> closed · <b style="color:var(--red)">${d.holes}</b> missing ` +
+    `· ${d.start} → ${d.end}`;
+
+  const hours = [];
+  for (let h = d.hour_min; h <= d.hour_max; h++) hours.push(h);
+  const head = '<th></th>' + hours.map(h => `<th>${h}</th>`).join('');
+  const body = d.days.map(day =>
+    `<tr><td class="d">${day.date}</td>` +
+    [...day.cells].map(c => `<td class="cell ${c}"></td>`).join('') +
+    '</tr>').join('');
+  $('cov-grid').innerHTML =
+    `<div style="overflow:auto;max-height:48vh"><table class="grid">` +
+    `<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+
+  const fill = $('cov-fill');
+  fill.style.display = '';
+  fill.disabled = d.holes === 0;
+  fill.textContent = d.holes ? `Fill ${d.holes} missing hours` : 'No gaps to fill';
+}
+
+async function fillGaps() {
+  if (!covTicker) return;
+  const body = {
+    start: $('cov-start').value || null,
+    end: $('cov-end').value || null,
+    hour_min: +($('cov-hmin').value || 0),
+    hour_max: +($('cov-hmax').value || 23),
+  };
+  const r = await api('POST', `/api/coverage/${encodeURIComponent(covTicker)}/fill`, body);
+  closeCoverage();
+  switchView('queue');
+  refresh();
+  if (!r.created) alert('No gaps to fill.');
+}
+
+function closeCoverage() { $('cov-overlay').classList.remove('show'); }
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closePreview(); closeCoverage(); }
+});
 
 (async () => {
   try {

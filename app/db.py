@@ -67,7 +67,20 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_job ON tasks(job_id, status);
+
+CREATE TABLE IF NOT EXISTS schedules (
+    id          TEXT PRIMARY KEY,
+    rel         TEXT NOT NULL,
+    cadence     TEXT NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    next_run    REAL NOT NULL,
+    last_run    REAL,
+    created_at  REAL NOT NULL
+);
 """
+
+# Auto-update cadences -> seconds between runs.
+CADENCES = {"hourly": 3600.0, "daily": 86400.0, "weekly": 604800.0}
 
 
 class Database:
@@ -228,6 +241,86 @@ class Database:
                 "UPDATE tasks SET status=?, attempts=0, error=NULL, updated_at=? "
                 "WHERE job_id=? AND status=?",
                 (T_PENDING, time.time(), job_id, T_FAILED),
+            )
+            self._conn.commit()
+
+    def dukascopy_task_status(self, ticker: str) -> dict[str, str]:
+        """Map each downloaded hour ``key`` ('YYYY/MM/DD/HH') to its best status
+        across every Dukascopy job for ``ticker``.
+
+        Used by coverage analysis to tell genuine market-closed hours (Dukascopy
+        404 → ``skipped``) apart from real holes. When the same hour appears in
+        more than one job, ``done`` beats ``skipped`` beats anything else.
+        """
+        prio = {T_DONE: 3, T_SKIPPED: 2}
+        with self._lock:
+            jobs = self._conn.execute(
+                "SELECT id, params FROM jobs WHERE type='dukascopy'"
+            ).fetchall()
+            ids = [j["id"] for j in jobs
+                   if json.loads(j["params"]).get("ticker") == ticker]
+            if not ids:
+                return {}
+            qmarks = ",".join("?" * len(ids))
+            rows = self._conn.execute(
+                f"SELECT key, status FROM tasks WHERE job_id IN ({qmarks})", ids
+            ).fetchall()
+        status: dict[str, str] = {}
+        for r in rows:
+            k, s = r["key"], r["status"]
+            if k not in status or prio.get(s, 1) > prio.get(status[k], 1):
+                status[k] = s
+        return status
+
+    # ---- schedules (auto-update) ---------------------------------------
+
+    def create_schedule(self, rel: str, cadence: str) -> str:
+        if cadence not in CADENCES:
+            raise ValueError(f"unknown cadence: {cadence}")
+        sid = uuid.uuid4().hex
+        now = time.time()
+        with self._lock:
+            # next_run = now: the first auto-update fires on the next poll tick,
+            # so a freshly created schedule visibly does something right away.
+            self._conn.execute(
+                "INSERT INTO schedules (id, rel, cadence, enabled, next_run, created_at)"
+                " VALUES (?,?,?,1,?,?)",
+                (sid, rel, cadence, now, now),
+            )
+            self._conn.commit()
+        return sid
+
+    def list_schedules(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM schedules ORDER BY created_at DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_schedule(self, sid: str):
+        with self._lock:
+            self._conn.execute("DELETE FROM schedules WHERE id=?", (sid,))
+            self._conn.commit()
+
+    def toggle_schedule(self, sid: str):
+        with self._lock:
+            self._conn.execute(
+                "UPDATE schedules SET enabled = 1 - enabled WHERE id=?", (sid,)
+            )
+            self._conn.commit()
+
+    def due_schedules(self, now: float) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM schedules WHERE enabled=1 AND next_run<=?", (now,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_schedule_ran(self, sid: str, cadence: str, now: float):
+        with self._lock:
+            self._conn.execute(
+                "UPDATE schedules SET last_run=?, next_run=? WHERE id=?",
+                (now, now + CADENCES.get(cadence, 86400.0), sid),
             )
             self._conn.commit()
 

@@ -6,6 +6,7 @@ server.log
 results/
 results_csv/
 company_data/
+crypto_data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

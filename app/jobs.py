@@ -59,6 +59,18 @@ def _daterange(start: str, end: str):
 
 def dukascopy_plan(params: dict) -> list[tuple[str, str]]:
     ticker = params["ticker"]
+
+    # "Fill gaps" jobs pass an explicit list of hour keys to (re)fetch instead
+    # of a date range; the keys are already in the Dukascopy path form.
+    only = params.get("only_keys")
+    if only:
+        tasks = []
+        for key in only:
+            date_part, _, hour_str = key.rpartition("/")
+            label = f"{ticker} {date_part.replace('/', '-')} {hour_str}h"
+            tasks.append((key, label))
+        return tasks
+
     hmin = int(params.get("hour_min", 0))
     hmax = int(params.get("hour_max", 23))
     tasks = []
@@ -202,30 +214,56 @@ def decode_run(params: dict, key: str) -> tuple[str, str]:
 # yfinance company metadata
 # ---------------------------------------------------------------------------
 
+def _valid_ticker(t: str) -> bool:
+    # Allow alphanumerics plus the '.'/'-' that appear in real symbols
+    # (BRK.B, BF.B, RDS-A) rather than letters only.
+    return bool(t) and all(c.isalnum() or c in ".-" for c in t)
+
+
 def yfinance_plan(params: dict) -> list[tuple[str, str]]:
     tickers = params.get("tickers") or []
     seen = set()
     tasks = []
     for t in tickers:
         t = str(t).strip().upper()
-        if t and t.isalpha() and t not in seen:
+        if _valid_ticker(t) and t not in seen:
             seen.add(t)
             tasks.append((t, t))
     return tasks
+
+
+def _dedup_series(series, value_label: str) -> list[dict]:
+    """Collapse runs of equal values, keeping the date each value changed."""
+    rows, last = [], None
+    for date in series.index:
+        cur = series[date]
+        if cur != last:
+            rows.append({"Date": date, value_label: cur})
+            last = cur
+    return rows
 
 
 def yfinance_run(params: dict, key: str) -> tuple[str, str]:
     import yfinance as yf  # imported lazily; heavy module
 
     ticker = key
+    interval = str(params.get("interval") or "1d")
+    start = params.get("start_date") or None
+    end = params.get("end_date") or None
+
     out_dir = os.path.join(config.COMPANY_DIR, ticker)
-    info_path = os.path.join(out_dir, f"{ticker}_company_info.csv")
-    if os.path.exists(info_path):
-        return ("done", info_path)
+    # The OHLCV file (the thing you actually backtest on) is the resume marker:
+    # interval is in the name so different bar sizes don't collide.
+    prices_path = os.path.join(out_dir, f"{ticker}_prices_{interval}.csv")
+    if os.path.exists(prices_path):
+        return ("done", prices_path)
 
     try:
         tk = yf.Ticker(ticker)
-        hist = tk.history(period="max")
+        if start or end:
+            hist = tk.history(start=start, end=end, interval=interval)
+        else:
+            hist = tk.history(period="max", interval=interval)
     except Exception as e:  # noqa: BLE001 - yfinance raises many error types
         raise RetryableError(f"yfinance error: {e}") from e
 
@@ -234,44 +272,156 @@ def yfinance_run(params: dict, key: str) -> tuple[str, str]:
 
     import pandas as pd
 
-    first_date = hist.index[0]
+    os.makedirs(out_dir, exist_ok=True)
+
+    # --- the OHLCV bars themselves (previously fetched and thrown away) ---
+    cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in hist.columns]
+    prices = hist[cols].copy()
+    prices.index.name = "Date"
+    tmp = prices_path + ".part"
+    prices.to_csv(tmp)
+    os.replace(tmp, prices_path)  # atomic: a partial write never looks complete
+
+    # --- metadata (best-effort: never lose the prices we just saved) ---
+    info_path = os.path.join(out_dir, f"{ticker}_company_info.csv")
+    if not os.path.exists(info_path):
+        try:
+            name = tk.info.get("longName", ticker)
+        except Exception:  # noqa: BLE001 - .info can fail independently of history
+            name = ticker
+        pd.DataFrame([{"Ticker": ticker, "Name": name,
+                       "First Date": hist.index[0]}]).to_csv(info_path, index=False)
+
     try:
-        name = tk.info.get("longName", ticker)
-    except Exception:  # noqa: BLE001 - .info can fail independently of history
-        name = ticker
-    divs = tk.dividends
-    splits = tk.splits
+        div_rows = _dedup_series(tk.dividends, "Dividend")
+        if div_rows:
+            pd.DataFrame(div_rows).to_csv(
+                os.path.join(out_dir, f"{ticker}_dividends.csv"), index=False)
+        split_rows = _dedup_series(tk.splits, "Stock Split")
+        if split_rows:
+            pd.DataFrame(split_rows).to_csv(
+                os.path.join(out_dir, f"{ticker}_stock_splits.csv"), index=False)
+    except Exception:  # noqa: BLE001 - corporate-action fetch is optional extra
+        pass
+
+    return ("done", prices_path)
+
+
+# ---------------------------------------------------------------------------
+# Binance crypto OHLCV (klines) — public API, no key required
+# ---------------------------------------------------------------------------
+
+BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+
+
+def _months(start: str, end: str):
+    """Yield 'YYYY-MM' for every calendar month touched by [start, end]."""
+    s = datetime.strptime(start, "%Y-%m-%d")
+    e = datetime.strptime(end, "%Y-%m-%d")
+    y, m = s.year, s.month
+    while (y, m) <= (e.year, e.month):
+        yield f"{y:04d}-{m:02d}"
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+
+
+def binance_plan(params: dict) -> list[tuple[str, str]]:
+    symbols = params.get("symbols") or []
+    interval = str(params.get("interval") or "1d")
+    start, end = params["start_date"], params["end_date"]
+    seen = set()
+    tasks = []
+    for sym in symbols:
+        sym = str(sym).strip().upper()
+        if not (sym and sym.isalnum()) or sym in seen:
+            continue
+        seen.add(sym)
+        # One task per symbol-month so a long range resumes file-by-file.
+        for month in _months(start, end):
+            key = f"{sym}/{interval}/{month}"
+            tasks.append((key, f"{sym} {interval} {month}"))
+    return tasks
+
+
+def binance_run(params: dict, key: str) -> tuple[str, str]:
+    sym, interval, month = key.split("/")
+
+    out_dir = os.path.join(config.CRYPTO_DIR, sym, interval)
+    out_path = os.path.join(out_dir, f"{month}.csv")
+    if os.path.exists(out_path):
+        return ("done", out_path)
+
+    # Window for this month, clamped to the job's overall date range. Binance
+    # times are epoch-millisecond UTC; startTime is inclusive, endTime exclusive.
+    y, mo = (int(x) for x in month.split("-"))
+    month_start = datetime(y, mo, 1, tzinfo=timezone.utc)
+    month_end = (datetime(y + 1, 1, 1, tzinfo=timezone.utc) if mo == 12
+                 else datetime(y, mo + 1, 1, tzinfo=timezone.utc))
+    job_start = datetime.strptime(params["start_date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    job_end = (datetime.strptime(params["end_date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+               + timedelta(days=1))
+    win_start = max(month_start, job_start)
+    win_end = min(month_end, job_end)
+    if win_start >= win_end:
+        return ("skipped", "")
+
+    cursor = int(win_start.timestamp() * 1000)
+    end_ms = int(win_end.timestamp() * 1000)
+    rows = []
+    sess = _session()
+    while cursor < end_ms:
+        q = {"symbol": sym, "interval": interval, "startTime": cursor,
+             "endTime": end_ms - 1, "limit": 1000}
+        try:
+            resp = sess.get(BINANCE_KLINES_URL, params=q, timeout=config.REQUEST_TIMEOUT)
+        except requests.exceptions.RequestException as e:
+            raise RetryableError(f"network error: {e}") from e
+
+        if resp.status_code in (429, 418):  # rate limited / IP banned — back off
+            raise RetryableError(f"rate limited ({resp.status_code})")
+        if resp.status_code >= 500:
+            raise RetryableError(f"server error {resp.status_code}")
+        if resp.status_code != 200:
+            # 400 = bad symbol/interval: a permanent error, not worth retrying.
+            raise ValueError(f"binance {resp.status_code}: {resp.text[:120]}")
+
+        batch = resp.json()
+        if not batch:
+            break
+        rows.extend(batch)
+        last_open = batch[-1][0]
+        cursor = last_open + 1  # advance past the last candle returned
+        if len(batch) < 1000:
+            break
+
+    if not rows:
+        # No klines in this window (symbol not yet listed) — nothing to retry.
+        return ("skipped", "")
 
     os.makedirs(out_dir, exist_ok=True)
-    pd.DataFrame([{"Ticker": ticker, "Name": name, "First Date": first_date}]).to_csv(
-        info_path, index=False)
-
-    div_rows, last = [], None
-    for date in divs.index:
-        cur = divs[date]
-        if cur != last:
-            div_rows.append({"Date": date, "Dividend": cur})
-            last = cur
-    if div_rows:
-        pd.DataFrame(div_rows).to_csv(
-            os.path.join(out_dir, f"{ticker}_dividends.csv"), index=False)
-
-    split_rows, last = [], None
-    for date in splits.index:
-        cur = splits[date]
-        if cur != last:
-            split_rows.append({"Date": date, "Stock Split": cur})
-            last = cur
-    if split_rows:
-        pd.DataFrame(split_rows).to_csv(
-            os.path.join(out_dir, f"{ticker}_stock_splits.csv"), index=False)
-
-    return ("done", info_path)
+    tmp = out_path + ".part"
+    with open(tmp, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["open_time", "open", "high", "low", "close", "volume",
+                        "close_time", "trades"])
+        for k in rows:
+            open_dt = datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc)
+            close_dt = datetime.fromtimestamp(k[6] / 1000, tz=timezone.utc)
+            writer.writerow([
+                open_dt.isoformat(sep=" ", timespec="milliseconds"),
+                k[1], k[2], k[3], k[4], k[5],
+                close_dt.isoformat(sep=" ", timespec="milliseconds"),
+                k[8],
+            ])
+    os.replace(tmp, out_path)  # atomic: a partial write never looks complete
+    return ("done", out_path)
 
 
 # Registry: job type -> (planner, runner, human label).
 JOB_TYPES = {
     "dukascopy": (dukascopy_plan, dukascopy_run, "Dukascopy bi5 download"),
     "decode": (decode_plan, decode_run, "Decode bi5 -> CSV"),
-    "yfinance": (yfinance_plan, yfinance_run, "yfinance metadata"),
+    "yfinance": (yfinance_plan, yfinance_run, "yfinance prices + metadata"),
+    "binance": (binance_plan, binance_run, "Binance crypto OHLCV"),
 }

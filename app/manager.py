@@ -19,7 +19,7 @@ import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config, db
+from . import config, db, updates
 from .jobs import JOB_TYPES, RetryableError
 
 
@@ -57,9 +57,22 @@ class Manager:
                 # Reap completed worker tasks.
                 for jid in [j for j, t in self._workers.items() if t.done()]:
                     self._workers.pop(jid, None)
+                self._run_due_schedules()
             except Exception:  # noqa: BLE001 - poll loop must never die
                 pass
             await asyncio.sleep(1.0)
+
+    def _run_due_schedules(self):
+        """Fire any auto-update schedule that's come due, then re-arm it."""
+        now = time.time()
+        for sch in self.db.due_schedules(now):
+            try:
+                updates.enqueue_update(self.db, sch["rel"])
+            except Exception:  # noqa: BLE001 - a bad/empty dataset must not wedge the loop
+                pass
+            # Re-arm regardless of outcome so a failing dataset isn't retried
+            # every second.
+            self.db.mark_schedule_ran(sch["id"], sch["cadence"], now)
 
     # ---- per-job worker -------------------------------------------------
 

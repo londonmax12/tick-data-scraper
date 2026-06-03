@@ -10,13 +10,47 @@ after the app is restarted.
 
 ## What it does
 
-Three job types, all queued from the same UI:
+Four job types, all queued from the same UI:
 
-| Job type    | Wraps                       | Output                | Resumable unit  |
-|-------------|-----------------------------|-----------------------|-----------------|
-| **Dukascopy** | `scrape.py`               | `results/<ticker>/`   | one hour `.bi5` |
-| **Decode**    | `process.py`              | `results_csv/<ticker>/` | one day CSV   |
-| **yfinance**  | `tickers/process_tickers.py` | `company_data/<ticker>/` | one ticker |
+| Job type    | Source                        | Output                    | Resumable unit   |
+|-------------|-------------------------------|---------------------------|------------------|
+| **Dukascopy** | Dukascopy FX tick feed      | `results/<ticker>/`       | one hour `.bi5`  |
+| **Decode**    | local `.bi5` → CSV          | `results_csv/<ticker>/`   | one day CSV      |
+| **yfinance**  | Yahoo Finance               | `company_data/<ticker>/`  | one ticker       |
+| **Binance**   | Binance public klines API   | `crypto_data/<symbol>/`   | one symbol-month |
+
+* **yfinance** saves the actual **OHLCV price history** (`<ticker>_prices_<interval>.csv`)
+  plus company info, dividends and splits. Pick a bar interval (1d … 1m) and an
+  optional date range — leave the dates blank for full history.
+* **Binance** pulls crypto **OHLCV klines** (no API key) at any interval, one CSV
+  per symbol-month so a long range resumes file-by-file. Rate limits (HTTP 429)
+  retry automatically.
+
+### Library
+
+A **Library** tab browses what's already on disk: every dataset grouped by
+source with its file count and size. Click **Preview** to see the first rows of
+any CSV plus a quick close-price chart, **Download** a single file, or grab a
+whole dataset as a **zip**. All file access is confined to the four output
+directories — paths that try to escape are rejected.
+
+### Coverage & gaps
+
+For a Dukascopy ticker, **Coverage** (in the Library) shows a day × hour heat-grid
+classifying every expected hour as **have** (on disk), **closed** (legitimately
+empty — Dukascopy 404 `skipped`, or a Saturday when FX is shut), or **missing**
+(a real hole). **Fill gaps** queues a Dukascopy job that re-fetches *only* the
+missing hours; market-closed ones simply 404 → `skipped`, so coverage becomes
+authoritative after one pass.
+
+### Incremental updates
+
+Every dataset in the Library has an **Update** button that inspects what's on
+disk and queues a job to carry it forward to today — from the last downloaded
+day (Dukascopy), the last month (Binance, re-fetching the partial latest month),
+or a full refresh (yfinance). **⏱ Auto** schedules that update on an `hourly` /
+`daily` / `weekly` cadence; the manager's poll loop fires due schedules in the
+background and survives restarts (schedule state lives in `manager.db`).
 
 ## Run it
 

@@ -10,7 +10,8 @@ DB_PATH = os.path.join(BASE_DIR, "manager.db")
 # Output directories (kept consistent with the original scripts).
 RESULTS_DIR = os.path.join(BASE_DIR, "results")          # raw .bi5 files
 CSV_DIR = os.path.join(BASE_DIR, "results_csv")          # decoded CSVs
-COMPANY_DIR = os.path.join(BASE_DIR, "company_data")     # yfinance metadata
+COMPANY_DIR = os.path.join(BASE_DIR, "company_data")     # yfinance prices + metadata
+CRYPTO_DIR = os.path.join(BASE_DIR, "crypto_data")       # Binance OHLCV klines
 
 # How many download tasks run at once across the whole manager.
 MAX_CONCURRENCY = int(os.environ.get("DM_CONCURRENCY", "12"))
